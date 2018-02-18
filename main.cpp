@@ -13,6 +13,7 @@
 #include "DigitalFilter.h"
 #include "ConfigFile.h"
 #include "D3Gadgets.h"
+#include "MPU6050_DMP6.h"
 
 
 #define LOGNAME "log"
@@ -29,6 +30,7 @@ PpmIn ppmIn(s2v2::CH1,CHNUM);
 TinyGPSPlus gps;
 SDBlockDevice bd(PB_15, PB_14, PB_13, PB_12);
 FATFileSystem fs("sd");
+MPU6050DMP6 mpu6050(s2v2::MPU_INT,&pc); //割り込みピン，シリアルポインタ i2cのピン指定は MPU6050>>I2Cdev.h 内のdefine
 ConfigFile config;
 
 D3Gadgets D3G;
@@ -51,6 +53,7 @@ struct SensorVal{
     float press;
     float pressLP[3];
     bool BmpisUpdated;
+    float rpy[3];
     int dist_cm;
 } sensor;
 
@@ -77,16 +80,22 @@ bool loadConfigFile(const char *fname);
 void bmp_thread(){
     CMyFilter filter[3];
     bmp.initialize(BMP280::INDOOR_NAVIGATION);
-    // filter[0].LowPass(0.5f, 1.0f/sqrt(2.0f), bmp.getSampleRate());
-    // filter[1].LowPass(0.4f, 1.0f/sqrt(2.0f), bmp.getSampleRate()); //これよさげ
-    // filter[2].LowPass(0.3f, 1.0f/sqrt(2.0f), bmp.getSampleRate());
 
     while(1){
         sensor.press = bmp.getPressure();
-        for(int i=0; i<3; i++)
-            sensor.pressLP[i] = filter[i].Process(sensor.press);
         sensor.BmpisUpdated = true;
         Thread::wait(bmp.getCycle_ms());
+    }
+}
+
+void mpu_thread(){
+    if(mpu6050.setup() == -1){
+        pc.printf("mpu is failed initilize\r\n");
+        return;
+    }
+    while(1){
+        mpu6050.getRollPitchYaw_Skipper(sensor.rpy);
+        Thread::wait(20);
     }
 }
 
@@ -130,11 +139,19 @@ void print_thread(){
         // pc.printf("%f\t",sensor.press);
         // printChannels(4,false);
         // pc.printf("%d\t", chControl.throttole());
-        pc.printf("%f\t%f\t", D3G.hover.dH * 100, D3G.hover.dV * 100);
-        pc.printf("lat:%lf\tlng:%lf\t",gps.location.lat(), gps.location.lng());
-        pc.printf("date:%d/%d/%d/%d\t",gps.date.year(), gps.date.month(), gps.date.month(), gps.date.day());
-        pc.printf("time:%d h %d m %d s",gps.time.hour(), gps.time.minute(), gps.time.second());
+        //pc.printf("%f\t%f\t", D3G.hover.dH * 100, D3G.hover.dV * 100);
 
+        // if(gps.location.isUpdated()){
+        //     pc.printf("lat:%lf\tlng:%lf\t",gps.location.lat(), gps.location.lng());
+        //     pc.printf("dist:%lf\tcourse%lf\t",TinyGPSPlus::distanceBetween(gps.location.lat(),gps.location.lng(),confVal.goalLat,confVal.goalLng),
+        //                                 TinyGPSPlus::courseTo(gps.location.lat(),gps.location.lng(),confVal.goalLat,confVal.goalLng));
+        //     pc.printf("alt:%f\tspeed:%f\t",gps.altitude.meters(),gps.speed.mps());
+
+        //     // pc.printf("date:%d/%d/%d/%d\t",gps.date.year(), gps.date.month(), gps.date.month(), gps.date.day());
+        //     // pc.printf("time:%d h %d m %d s",gps.time.hour(), gps.time.minute(), gps.time.second());
+        //     pc.printf("\r\n");
+        // }
+        pc.printf("%f\t%f\t%f",sensor.rpy[0], sensor.rpy[1], sensor.rpy[2]);
         pc.printf("\r\n");
         Thread::wait(40);
     }
@@ -187,7 +204,7 @@ int main()
     }
 
     thread[0].start(callback(bmp_thread));
-    thread[1].start(callback(hcsr04_thread));
+    thread[1].start(callback(mpu_thread));
     thread[2].start(callback(log_thread));
     thread[3].start(callback(print_thread));
     qThread.start(callback(&queue, &EventQueue::dispatch_forever));
