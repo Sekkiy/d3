@@ -10,21 +10,31 @@ public:
 
     void setCurrentLocation(double latitude, double longtitude);
     void setGoalLocation(double latitude, double longtitude);
-
+    void toGoal();
 
 
 private:
-    double currentlat;
-    double currentlng;
+    double currentlat[2];
+    double currentlng[2];
     double goalLat;
     double goalLng;
 
+    enum Condition{
+        Stop,
+
+    } condition;
+
+
+    double getTurnRad();
 };
 
 
 inline void D3Guide::setCurrentLocation(double latitude, double longtitude){
-    currentlat = latitude;
-    currentlng = longtitude;
+    currentlat[1] = currentlat[0];
+    currentlng[1] = currentlng[0];
+    
+    currentlat[0] = latitude;
+    currentlng[0] = longtitude;
 }
 
 inline void D3Guide::setGoalLocation(double latitude, double longtitude){

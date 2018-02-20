@@ -14,7 +14,7 @@
 #include "ConfigFile.h"
 #include "D3Gadgets.h"
 #include "MPU6050_DMP6.h"
-
+#include <math.h>
 
 #define LOGNAME "log"
 #define CHNUM 8
@@ -79,7 +79,7 @@ bool loadConfigFile(const char *fname);
 
 void bmp_thread(){
     CMyFilter filter[3];
-    bmp.initialize(BMP280::INDOOR_NAVIGATION);
+    // bmp.initialize(BMP280::INDOOR_NAVIGATION);
 
     while(1){
         sensor.press = bmp.getPressure();
@@ -89,12 +89,13 @@ void bmp_thread(){
 }
 
 void mpu_thread(){
-    if(mpu6050.setup() == -1){
-        pc.printf("mpu is failed initilize\r\n");
-        return;
-    }
+    // if(mpu6050.setup() == -1){
+    //     pc.printf("mpu is failed initilize\r\n");
+    //     return;
+    // }
     while(1){
         mpu6050.getRollPitchYaw_Skipper(sensor.rpy);
+        // pc.printf("%f,%f,%f\r\n",sensor.rpy[0],sensor.rpy[1],sensor.rpy[2]);
         Thread::wait(20);
     }
 }
@@ -151,7 +152,7 @@ void print_thread(){
         //     // pc.printf("time:%d h %d m %d s",gps.time.hour(), gps.time.minute(), gps.time.second());
         //     pc.printf("\r\n");
         // }
-        pc.printf("%f\t%f\t%f",sensor.rpy[0], sensor.rpy[1], sensor.rpy[2]);
+        pc.printf("%f\t%f\t%f",sensor.rpy[0]*180.0/M_PI, sensor.rpy[1]*180.0/M_PI, sensor.rpy[2]*180.0/M_PI);
         pc.printf("\r\n");
         Thread::wait(40);
     }
@@ -203,12 +204,28 @@ int main()
         pc.printf("false\r\n");        
     }
 
+    // I2C i2c(s2v2::MPU_SDA, s2v2::MPU_SCL);
+    // char c = 0x75;
+    // i2c.write(0x68,&c,1);
+    // i2c.read(0x68,&c,1);
+    
+    // pc.printf("id:%x\r\n",c);
+    // while(1){}
+
+    bmp.initialize(BMP280::INDOOR_NAVIGATION);
+    if(mpu6050.setup() == -1){
+        pc.printf("mpu is failed initilize\r\n");
+    }
+
+
     thread[0].start(callback(bmp_thread));
     thread[1].start(callback(mpu_thread));
-    thread[2].start(callback(log_thread));
+    // thread[2].start(callback(log_thread));
     thread[3].start(callback(print_thread));
-    qThread.start(callback(&queue, &EventQueue::dispatch_forever));
-    chTicker.attach_us(queue.event(ch_callback),18000);
+    // qThread.start(callback(&queue, &EventQueue::dispatch_forever));
+    // chTicker.attach_us(queue.event(ch_callback),18000);
+    queue.call_every(17,ch_callback);
+    queue.dispatch();
     gpsSerial.attach(callback(gps_callback));
     Thread::yield;
     wait(1);
