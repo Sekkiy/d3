@@ -22,6 +22,10 @@ namespace DEFAULT{
     const float GOAL_LONGTITUDE = 139.517864;
     const float THLOTTOLE_HOVERING = 0.55;
     const float THRESHOLD_HEIGHT_RANGE = 0.33;
+    const int16_t COMPASS_CALIBRATION_X = -13;
+    const int16_t COMPASS_CALIBRATION_Y = -169;
+    const int16_t COMPASS_CALIBRATION_Z = -208;
+    
     const uint16_t TLIM_AIL = 0;
     const uint16_t TLIM_ELE = 0;
     const uint16_t TLIM_RUD = 0;

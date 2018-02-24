@@ -13,8 +13,9 @@
 #include "DigitalFilter.h"
 #include "ConfigFile.h"
 #include "D3Gadgets.h"
-#include "MPU6050_DMP6.h"
 #include <math.h>
+#include "MPU9250.h"
+#include "HMC5983.h"
 
 #define LOGNAME "log"
 #define CHNUM 8
@@ -30,8 +31,9 @@ PpmIn ppmIn(s2v2::CH1,CHNUM);
 TinyGPSPlus gps;
 SDBlockDevice bd(PB_15, PB_14, PB_13, PB_12);
 FATFileSystem fs("sd");
-MPU6050DMP6 mpu6050(s2v2::MPU_INT,&pc); //割り込みピン，シリアルポインタ i2cのピン指定は MPU6050>>I2Cdev.h 内のdefine
 ConfigFile config;
+MPU9250 mpu(s2v2::MPU_SDA,s2v2::MPU_SCL,&pc);
+HMC5983 hmc(s2v2::CH8, s2v2::CH7);
 
 D3Gadgets D3G;
 
@@ -52,9 +54,12 @@ bool g_isControlled = false;
 struct SensorVal{
     float press;
     float pressLP[3];
-    bool BmpisUpdated;
+    bool bmpIsUpdated;
     float rpy[3];
-    int dist_cm;
+    int16_t mag[3];
+    bool hmcIsUpdated;
+    float timer[3];
+    float timer_old[3];
 } sensor;
 
 struct ConfigVal{
@@ -64,6 +69,7 @@ struct ConfigVal{
     float thresholdHeightRange;
     float goalLat;
     float goalLng;
+    int16_t compassCalib[3];
     uint16_t hoveringTHL;
     uint16_t trimAIL;
     uint16_t trimELE;
@@ -75,37 +81,43 @@ void getRcch(RCChannel& ch);
 void setPpm(RCChannel& ch);
 void printChannels(int chNum, bool linefeed = true);
 bool loadConfigFile(const char *fname);
+void initializeMPU9250();
+void initializeHMC5983();
 
 
 void bmp_thread(){
-    CMyFilter filter[3];
-    // bmp.initialize(BMP280::INDOOR_NAVIGATION);
-
-    while(1){
-        sensor.press = bmp.getPressure();
-        sensor.BmpisUpdated = true;
-        Thread::wait(bmp.getCycle_ms());
-    }
+    sensor.press = bmp.getPressure();
+    sensor.bmpIsUpdated = true;
+    sensor.timer_old[0] = sensor.timer[0];
+    sensor.timer[0] = t.read_ms();
 }
 
 void mpu_thread(){
-    // if(mpu6050.setup() == -1){
-    //     pc.printf("mpu is failed initilize\r\n");
-    //     return;
-    // }
-    while(1){
-        mpu6050.getRollPitchYaw_Skipper(sensor.rpy);
-        // pc.printf("%f,%f,%f\r\n",sensor.rpy[0],sensor.rpy[1],sensor.rpy[2]);
-        Thread::wait(20);
+    if(!mpu.sensingAcGyMg()){
+        return;
     }
+    
+    // if (imu.fifoAvailable()){ //fifo is not being available
+    //     wait_ms(5);
+    //     // Use dmpUpdateFifo to update the ax, gx, mx, etc. values
+    //     if (imu.dmpUpdateFifo() == INV_SUCCESS){
+    //         // imu.computeEulerAngles();
+    //         imu.computeEulerAngles_D3();
+    //         pc.printf("%.4lf, %.4lf, %.4lf\r\n", imu.yaw,imu.pitch,imu.roll);
+            
+    //     }
+    // }
+    sensor.timer_old[1] = sensor.timer[1];
+    sensor.timer[1] = t.read_ms();
 }
 
-void hcsr04_thread(){
-    while(1){
-        hcsr04.start();
-        Thread::wait(25);
-        sensor.dist_cm = hcsr04.get_dist_cm();
-    }
+void hmc_thread(){
+    int16_t magxyz[3];
+    hmc.getXYZ(magxyz);
+    pc.printf("%d\t%d\t%d\t%lf\t%lf\t%lf\r\n",magxyz[0],magxyz[1],magxyz[2],
+                                    hmc.getHeadingDeg(magxyz[0],magxyz[1],-13, -169),
+                                    hmc.getHeadingDeg(magxyz[1],magxyz[2],-169,-208),
+                                    hmc.getHeadingDeg(magxyz[2],magxyz[0],-208,-13));
 }
 
 void log_thread(){
@@ -115,7 +127,7 @@ void log_thread(){
     fprintf(fp,"create new log file\r\n");
     //fprintf(fp,"press[hPa]\tdist[cm]\ttime[ms]\tAIL\tELE\tTHL\tRUD\r\n");
     while(1){
-        fprintf(fp, "%d\t%d\t%f\t", t.read(), sensor.dist_cm, sensor.press);
+        fprintf(fp, "%f\t%f\t", t.read(), sensor.press);
         // for(int i=0; i<3; i++){
         //     fprintf(fp, "%f\t", sensor.pressLP[i]); 
         // }
@@ -133,11 +145,10 @@ void log_thread(){
 void print_thread(){
     pc.printf("press[hPa]\tdist[cm]\r\n");
     while(1){
-        // pc.printf("%f\t%d\t%f",
+        // pc.printf("%f\t%f",
         //           D3G.hover.pressToHeight_m(sensor.press),
-        //           sensor.dist_cm,
         //           g_thlRatio);
-        // pc.printf("%f\t",sensor.press);
+        //pc.printf("%f\t",sensor.press);
         // printChannels(4,false);
         // pc.printf("%d\t", chControl.throttole());
         //pc.printf("%f\t%f\t", D3G.hover.dH * 100, D3G.hover.dV * 100);
@@ -152,7 +163,8 @@ void print_thread(){
         //     // pc.printf("time:%d h %d m %d s",gps.time.hour(), gps.time.minute(), gps.time.second());
         //     pc.printf("\r\n");
         // }
-        pc.printf("%f\t%f\t%f",sensor.rpy[0]*180.0/M_PI, sensor.rpy[1]*180.0/M_PI, sensor.rpy[2]*180.0/M_PI);
+        
+        //pc.printf("%f %f ",sensor.timer[0]-sensor.timer_old[0], sensor.timer[1]-sensor.timer_old[1]);
         pc.printf("\r\n");
         Thread::wait(40);
     }
@@ -167,7 +179,6 @@ void ch_callback(){
 }
 
 void gps_callback(){
-    // pc.putc(gpsSerial.getc());
     gps.encode(gpsSerial.getc());
 }
 
@@ -176,9 +187,8 @@ void gps_callback(){
 int main()
 {
     Thread thread[4];
-    Thread qThread;
     
-    EventQueue queue(32 * EVENTS_EVENT_SIZE);
+    EventQueue queue(100 * EVENTS_EVENT_SIZE);
 
     pc.baud(115200);
     pc.printf("Hello SkipperS2v2\r\n");
@@ -195,50 +205,36 @@ int main()
     D3G.hover.setTargetPressure(bmp.getPressure());
     D3G.hover.setThresholdHeightRange(confVal.thresholdHeightRange);
 
+    t.start();
 
-    if(config.load("/sd/D3config.txt")){
-        float test1 = config.get("TEST1_FLOAT");
-        float test2 = config.get("TEST2_INT");
-        pc.printf("sdinputtest\r\ntest1:%f  test2:%f\r\n",test1,test2);
-    }else{
-        pc.printf("false\r\n");        
-    }
-
-    // I2C i2c(s2v2::MPU_SDA, s2v2::MPU_SCL);
-    // char c = 0x75;
-    // i2c.write(0x68,&c,1);
-    // i2c.read(0x68,&c,1);
-    
-    // pc.printf("id:%x\r\n",c);
-    // while(1){}
-
+    initializeMPU9250();
+    initializeHMC5983();
     bmp.initialize(BMP280::INDOOR_NAVIGATION);
-    if(mpu6050.setup() == -1){
-        pc.printf("mpu is failed initilize\r\n");
-    }
 
 
-    thread[0].start(callback(bmp_thread));
-    thread[1].start(callback(mpu_thread));
+    // thread[0].start(callback(bmp_thread));
+    // thread[1].start(callback(sensingMpu9250));
     // thread[2].start(callback(log_thread));
-    thread[3].start(callback(print_thread));
-    // qThread.start(callback(&queue, &EventQueue::dispatch_forever));
-    // chTicker.attach_us(queue.event(ch_callback),18000);
+    // thread[3].start(callback(print_thread));
+    
     queue.call_every(17,ch_callback);
+    queue.call_every(bmp.getCycle_ms(),bmp_thread);
+    // queue.call_every(30,mpu_thread);
+    queue.call_every(70,hmc_thread);
     queue.dispatch();
     gpsSerial.attach(callback(gps_callback));
+    
     Thread::yield;
     wait(1);
 
     pc.printf("Complete initilizing\r\n");
 
     int t_current, t_old = 0;
-    t.start();
     bool swRise = false;
     D3G.hover.setTargetPressure(sensor.press);
     
     uint16_t g_thl_old;
-
+     
     while(1){
         if(rcch.value(7) > 1500){
         // if(true){
@@ -248,10 +244,10 @@ int main()
                 g_thlRatio_old = (static_cast<float>(rcch.throttole() - RCChannel::CH_MIN) )/ (static_cast<float>((RCChannel::CH_MAX - RCChannel::CH_MIN))); //
                 swRise = true;
             }
-            if(sensor.BmpisUpdated){
+            if(sensor.bmpIsUpdated){
                 g_thlRatio = g_thlRatio_old + D3G.hover.calcTHLRatio(sensor.press);
                 chControl.setThrottoleWithRatio(g_thlRatio);
-                sensor.BmpisUpdated = false;
+                sensor.bmpIsUpdated = false;
             }
             g_isControlled = true;
         }else{
@@ -316,6 +312,9 @@ bool loadConfigFile(const char *fname){
         confVal.goalLng      = DF::GOAL_LONGTITUDE;
         confVal.hoveringTHL  = DF::THLOTTOLE_HOVERING;
         confVal.thresholdHeightRange = DF::THRESHOLD_HEIGHT_RANGE;        
+        confVal.compassCalib[0] = DF::COMPASS_CALIBRATION_X;
+        confVal.compassCalib[1] = DF::COMPASS_CALIBRATION_Y;
+        confVal.compassCalib[2] = DF::COMPASS_CALIBRATION_Z;
         confVal.trimAIL      = DF::TLIM_AIL;
         confVal.trimELE      = DF::TLIM_ELE;
         confVal.trimRUD      = DF::TLIM_RUD;
@@ -328,6 +327,9 @@ bool loadConfigFile(const char *fname){
         confVal.goalLng      = config.get("GOAL_LONGTITUDE");
         confVal.hoveringTHL  = config.get("THLOTTOLE_HOVERING");
         confVal.thresholdHeightRange = config.get("THRESHOLD_HEIGHT_RANGE");
+        confVal.compassCalib[0] = config.get("COMPASS_CALIBRATION_X");
+        confVal.compassCalib[1] = config.get("COMPASS_CALIBRATION_Y");
+        confVal.compassCalib[2] = config.get("COMPASS_CALIBRATION_Z");
         confVal.trimAIL      = static_cast<float>(config.get("TLIM_AIL"));
         confVal.trimELE      = static_cast<float>(config.get("TLIM_ELE"));
         confVal.trimRUD      = static_cast<float>(config.get("TLIM_RUD"));
@@ -335,3 +337,40 @@ bool loadConfigFile(const char *fname){
     }
 }
 
+void initializeMPU9250(){
+
+    if(!mpu.Initialize()){
+        pc.printf("failed initialize\r\n");
+        while(1);
+    }
+    mpu.setMagBias(0,0,0);
+
+    mpu.sensingAcGyMg();
+
+    // imu_init();
+    // stamper_init();
+    // if (imu.begin() != INV_SUCCESS)
+    // {
+    //     while(1){
+    //         pc.printf("Unable to communicate with MPU-9250");
+    //         pc.printf("Check connections, and try again.\n");
+    //         wait_ms(5000);
+    //     }
+    // }
+    // pc.printf("imu.begin() suceeded\n");
+
+    // if (imu.dmpBegin(DMP_FEATURE_6X_LP_QUAT |  // Enable 6-axis quat
+    //                      DMP_FEATURE_GYRO_CAL, // Use gyro calibration
+    //                 150) == INV_ERROR)
+    // {                                            // Set DMP FIFO rate to 150 Hz
+    //     pc.printf("imu.dmpBegin have failed\n"); //dmpLoad function under it fails which is caused by memcmp(firmware+ii, cur, this_write) (it is located at row 2871 of inv_mpu.c)
+    // }
+    // else
+    // {
+    //     pc.printf("imu.dmpBegin() suceeded\n");
+    // }
+}
+
+void initializeHMC5983(){
+    hmc.init();
+}

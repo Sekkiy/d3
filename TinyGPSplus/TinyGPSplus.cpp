@@ -310,7 +310,7 @@ double TinyGPSPlus::distanceBetween(double lat1, double long1, double lat2, doub
   return delta * 6372795;
 }
 
-double TinyGPSPlus::courseTo(double lat1, double long1, double lat2, double long2)
+double TinyGPSPlus::courseTo(double lat1, double long1, double lat2, double long2, bool zeroTo360)
 {
   // returns course in degrees (North=0, West=270) from position 1 to position 2,
   // both specified as signed decimal-degrees latitude and longitude.
@@ -323,8 +323,7 @@ double TinyGPSPlus::courseTo(double lat1, double long1, double lat2, double long
   double a2 = sin(lat1) * cos(lat2) * cos(dlon);
   a2 = cos(lat1) * sin(lat2) - a2;
   a2 = atan2(a1, a2);
-  if (a2 < 0.0)
-  {
+  if (zeroTo360 && (a2 < 0.0)){
     a2 += TWO_PI;
   }
   return degrees(a2);

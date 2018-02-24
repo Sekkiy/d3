@@ -232,7 +232,7 @@ public:
   static const char *libraryVersion() { return _GPS_VERSION; }
 
   static double distanceBetween(double lat1, double long1, double lat2, double long2);
-  static double courseTo(double lat1, double long1, double lat2, double long2);
+  static double courseTo(double lat1, double long1, double lat2, double long2, bool zeroTo360 = true);
   static const char *cardinal(double course);
 
   static int32_t parseDecimal(const char *term);
