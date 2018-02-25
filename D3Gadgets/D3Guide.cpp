@@ -1,13 +1,6 @@
 #include "D3Guide.h"
 #include <math.h>
 
-// getTurnlRad : 機体固定座標系で前方からゴール方向までの角度を算出(CW正, -pi~pi)
-//               compassRad:機体前方から北までの角度(CW正, -pi~pi)
-//               gpsGoalRad:北からゴール方向までの角度(北0, 東pi/2, -pi~pi)
-double D3Guide::getTurnRad(){
-    double gpsGoalRad = calcGpsRad(mCurrentLat[0], mCurrentLng[0], mGoalLat, mGoalLng);
-    return withinMPiToPi(mCompassRad + gpsGoalRad);
-}
 
 //divideVelocity : 機体の速度を前後と左右方向に分ける．
 //                 val[2]:速度を格納する配列．val[0]:機体前後速度(前正), val[1]:機体左右速度(右正)
@@ -31,9 +24,9 @@ double D3Guide::calcGpsRad(double lat1, double long1, double lat2, double long2)
   // both specified as signed decimal-degrees latitude and longitude.
   // Because Earth is no exact sphere, calculated course may be off by a tiny fraction.
   // Courtesy of Maarten Lamers
-  double dlon = radians(long2-long1);
-  lat1 = radians(lat1);
-  lat2 = radians(lat2);
+  double dlon = toRadian(long2-long1);
+  lat1 = toRadian(lat1);
+  lat2 = toRadian(lat2);
   double a1 = sin(dlon) * cos(lat2);
   double a2 = sin(lat1) * cos(lat2) * cos(dlon);
   a2 = cos(lat1) * sin(lat2) - a2;
@@ -71,11 +64,11 @@ double D3Guide::distanceBetween(double lat1, double long1, double lat2, double l
   // distance computation for hypothetical sphere of radius 6372795 meters.
   // Because Earth is no exact sphere, rounding errors may be up to 0.5%.
   // Courtesy of Maarten Lamers
-  double delta = radians(long1-long2);
+  double delta = toRadian(long1-long2);
   double sdlong = sin(delta);
   double cdlong = cos(delta);
-  lat1 = radians(lat1);
-  lat2 = radians(lat2);
+  lat1 = toRadian(lat1);
+  lat2 = toRadian(lat2);
   double slat1 = sin(lat1);
   double clat1 = cos(lat1);
   double slat2 = sin(lat2);

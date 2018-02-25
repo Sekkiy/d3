@@ -13,18 +13,19 @@ public:
                      setRcchValue(RCChannel::AIL, neutralAIL);
                      setRcchValue(RCChannel::RUD, neutralRUD);}
 
+    void neutralFB(){setRcchValue(RCChannel::ELE, neutralELE);}
     void forward()  {setRcchValue(RCChannel::ELE, forwardELE);}
     void forward(uint16_t incremental)  {setRcchValue(RCChannel::ELE, neutralELE + incremental);}
     void back()     {setRcchValue(RCChannel::ELE, backELE);}
     void back(uint16_t incremental)     {setRcchValue(RCChannel::ELE, neutralELE - incremental);}
-    void stopForward(float mps);
 
-
+    void neutralRL(){setRcchValue(RCChannel::AIL, neutralAIL);}
     void right()    {setRcchValue(RCChannel::AIL, rightAIL);}
     void right(uint16_t incremental)    {setRcchValue(RCChannel::AIL, neutralAIL + incremental);}
     void left()     {setRcchValue(RCChannel::AIL, leftAIL);}
     void left(uint16_t incremental)     {setRcchValue(RCChannel::AIL, neutralAIL - incremental);}
 
+    void neutralTurn(){setRcchValue(RCChannel::RUD, neutralRUD);}
     void rightTurn(){setRcchValue(RCChannel::RUD, rightTurnRUD);}
     void rightTurn(uint16_t incremental){setRcchValue(RCChannel::RUD, neutralRUD + incremental);}
     void leftTurn() {setRcchValue(RCChannel::RUD, leftTurnRUD);}
@@ -42,6 +43,18 @@ public:
     void setNeutralRUD(uint16_t value)  {neutralRUD     = value;}
     void setRightTurnRUD(uint16_t value){rightTurnRUD   = value;}
     void setLeftTurnRUD(uint16_t value) {leftTurnRUD    = value;}
+
+    float getNeutralELE()  {return neutralELE;}
+    float getForwardELE()  {return forwardELE;}
+    float getBackELE()     {return backELE;}
+
+    float getNeutralAIL()  {return neutralAIL;}
+    float getRightAIL()    {return rightAIL;}
+    float getLeftAIL()     {return leftAIL;}
+
+    float getNeutralRUD()  {return neutralRUD;}
+    float getRightTurnRUD(){return rightTurnRUD;}
+    float getLeftTurnRUD() {return leftTurnRUD;}
 
 private:
     RCChannel* p_rcch;
