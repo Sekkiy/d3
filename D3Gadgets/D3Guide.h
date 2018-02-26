@@ -21,8 +21,11 @@ public:
     void updateCompass(int16_t magxyz[3]);
     void updateInputs(double lat, double lng, int16_t magxyz[3]);
     void setGoalLocation(double lat, double lng);
+    void setMagBias(int16_t xbias, int16_t ybias, int16_t zbias);
+    void setMagBias(int16_t xyzbias[3]);
     void setLocationError(double error);
     void setCompassAxis(compassAxis forward, compassAxis right);
+    double getCompassRad();
     double getTurnRad();
     double getGoalDistance();
     bool divideVelocity(double val[2], double velocity, bool checkPrecision = true);
@@ -35,6 +38,7 @@ private:
     double mCompassRad;
     double mMagDeclination;
     double mLocationError;
+    int16_t mMagBiasxyz[3];
     compassAxis mForward;
     compassAxis mRight;
     
@@ -78,6 +82,18 @@ inline void D3Guide::setGoalLocation(double lat, double lng){
     mMagDeclination = toRadian(calcMagDeclination(lat, lng));
 }
 
+inline void D3Guide::setMagBias(int16_t xbias, int16_t ybias, int16_t zbias){
+    mMagBiasxyz[0] = xbias;
+    mMagBiasxyz[1] = ybias;
+    mMagBiasxyz[2] = zbias;
+}
+
+inline void D3Guide::setMagBias(int16_t xyzbias[3]){
+    for(int i=0; i<3; i++)
+        mMagBiasxyz[i] = xyzbias[i];
+}
+
+
 inline void D3Guide::setLocationError(double error){
     mLocationError = error;
 }
@@ -101,8 +117,13 @@ inline double D3Guide::getGoalDistance(){
     return distanceBetween(mCurrentLat[0], mCurrentLng[0], mGoalLat, mGoalLng);
 }
 
+inline double D3Guide::getCompassRad(){
+    return mCompassRad; 
+}
+
 inline double D3Guide::calcCompassRad(int16_t magxyz[3]){
     double rad = atan2(toFrameAxis(magxyz, mRight), toFrameAxis(magxyz, mForward)) - mMagDeclination;
+    // return rad;
     return withinMPiToPi(rad);
 }
 

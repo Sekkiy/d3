@@ -38,8 +38,6 @@ class D3Hover
 public:
     D3Hover(RCChannel* rcch);
 
-    uint16_t hovering(float pressure);
-
     uint16_t calcTHL(float pressure);
     float calcTHLRatio(float hPa);
 

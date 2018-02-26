@@ -37,22 +37,22 @@ double D3Guide::calcGpsRad(double lat1, double long1, double lat2, double long2)
 int16_t D3Guide::toFrameAxis(int16_t magxyz[3], compassAxis axis){
     switch(axis){
         case AXIS_X:
-            return magxyz[0];
+            return magxyz[0]-mMagBiasxyz[0];
             break;
         case AXIS_Y:
-            return magxyz[1];
+            return magxyz[1]-mMagBiasxyz[1];
             break;
         case AXIS_Z:
-            return magxyz[2];
+            return magxyz[2]-mMagBiasxyz[2];
             break;
         case AXIS_mX:
-            return -magxyz[0];
+            return -(magxyz[0]-mMagBiasxyz[0]);
             break;
         case AXIS_mY:
-            return -magxyz[1];
+            return -(magxyz[1]-mMagBiasxyz[1]);
             break;
         case AXIS_mZ:
-            return -magxyz[2];
+            return -(magxyz[2]-mMagBiasxyz[2]);
             break;
     }
 }
@@ -82,10 +82,10 @@ double D3Guide::distanceBetween(double lat1, double long1, double lat2, double l
   return delta * 6372795;
 }
 
-double withinMPiToPi(double rad){
+double D3Guide::withinMPiToPi(double rad){
     if(rad > M_PI)
         rad -= 2*M_PI;
-    if(rad < M_PI)
+    if(rad < -M_PI)
         rad += 2*M_PI;
     return rad;
 }

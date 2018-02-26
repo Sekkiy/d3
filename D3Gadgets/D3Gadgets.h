@@ -20,7 +20,27 @@ public:
     D3Guide guide;
     
     void process(RCChannel& rcch);
+    void setStartTurnDeg(float deg){mStartTurnDeg = deg;}
+    void setMaxELEIncremental(uint16_t maxELEInc){mMaxELEInc = maxELEInc;}
+    void setMaxRUDIncremental(uint16_t maxRUDInc){mMaxRUDInc = maxRUDInc;}
+    void setGainVtoS(float gain){mGainVtoS = gain;}
+    void setMaxStopSec(float second){mMaxStopSec = second;}
+    void setHoveringTHLRatio(float ratio){mHoveringTHLRatio = ratio;}
     void nowControlling(bool isControlling = true){mIsControlling = isControlling;}
+
+    float getTurnDeg(){return mTurnDeg;}
+    float getGoalDist(){return mGoalDist;}
+
+    void updateBaroData(float hPa){mRcch.setThrottoleWithRatio(mHoveringTHLRatio + hover.calcTHLRatio(hPa));}
+    void updateCompassData(int16_t magxyz[3]){guide.updateCompass(magxyz);}
+    void updateGPSData(double latitude, double longtitude, double velocity){
+        guide.updateCurrentLocation(latitude,longtitude);
+        mVelocity = velocity;
+    }
+
+    uint16_t pitchByDeg(float deg);
+    uint16_t yawByDeg(float deg);
+    RCChannel mRcch;
 
 private:
     enum MoveComand{
@@ -33,18 +53,25 @@ private:
     };
 
     Timeout mTimeout[3];
-    RCChannel mRcch;
     bool mIsControlling;
+    float mStartTurnDeg;
+    uint16_t mMaxELEInc;
+    uint16_t mMaxRUDInc;
+    double mVelocity;
+    float mHoveringTHLRatio;
+    float mGainVtoS;
+    float mMaxStopSec;
     float mTurnDeg;
-    uint16_t mMaxIncYaw;
-    uint16_t mMaxIncPitch;
-    
-    
+    float mGoalDist;
+
     void setMoveParams();
     void moveByTime(MoveComand comand, float second);
     void guideLocation();
-    uint16_t pitchByDeg(float deg);
-    uint16_t yawByDeg(float deg);
+    void stopLateralMotion();
+    void stopVerticalMotion();
+    void stopMotion();
+    // uint16_t pitchByDeg(float deg);
+    // uint16_t yawByDeg(float deg);
     float fline(float val, float x0, float y0, float x1, float y1);
 };
 

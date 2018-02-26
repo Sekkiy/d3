@@ -26,8 +26,8 @@ RawSerial pc(s2v2::PC_TX, s2v2::PC_RX);
 RawSerial gpsSerial(s2v2::CH5, s2v2::CH6);
 BMP280 bmp(s2v2::BMP_SDA, s2v2::BMP_SCL);
 HCSR04 hcsr04(s2v2::CH3, s2v2::CH4);
-PpmOut ppmOut(s2v2::CH2,CHNUM);
-PpmIn ppmIn(s2v2::CH1,CHNUM);
+PpmOut ppmOut(s2v2::CH2,CHNUM); //Ch2
+PpmIn ppmIn(s2v2::CH1,CHNUM); //CH1
 TinyGPSPlus gps;
 SDBlockDevice bd(PB_15, PB_14, PB_13, PB_12);
 FATFileSystem fs("sd");
@@ -56,8 +56,11 @@ struct SensorVal{
     float pressLP[3];
     bool bmpIsUpdated;
     float rpy[3];
-    int16_t mag[3];
+    int16_t magxyz[3];
     bool hmcIsUpdated;
+    double lat;
+    double lng;
+    double speed;
     float timer[3];
     float timer_old[3];
 } sensor;
@@ -76,6 +79,7 @@ struct ConfigVal{
     uint16_t trimRUD;
 } confVal;
 
+void setupD3G();
 int searchNewLogFileNumber(char fname[]);
 void getRcch(RCChannel& ch);
 void setPpm(RCChannel& ch);
@@ -87,6 +91,7 @@ void initializeHMC5983();
 
 void bmp_thread(){
     sensor.press = bmp.getPressure();
+    D3G.updateBaroData(sensor.press);
     sensor.bmpIsUpdated = true;
     sensor.timer_old[0] = sensor.timer[0];
     sensor.timer[0] = t.read_ms();
@@ -111,13 +116,16 @@ void mpu_thread(){
     sensor.timer[1] = t.read_ms();
 }
 
+//x -250
+//y -270
 void hmc_thread(){
-    int16_t magxyz[3];
-    hmc.getXYZ(magxyz);
-    pc.printf("%d\t%d\t%d\t%lf\t%lf\t%lf\r\n",magxyz[0],magxyz[1],magxyz[2],
-                                    hmc.getHeadingDeg(magxyz[0],magxyz[1],-13, -169),
-                                    hmc.getHeadingDeg(magxyz[1],magxyz[2],-169,-208),
-                                    hmc.getHeadingDeg(magxyz[2],magxyz[0],-208,-13));
+    hmc.getXYZ(sensor.magxyz);
+    D3G.updateCompassData(sensor.magxyz);
+    // D3G.guide.updateCompass(sensor.magxyz);
+    // pc.printf("%d\t%d\t%d\t%lf\t%lf\t%lf\r\n",sensor.magxyz[0],sensor.magxyz[1],sensor.magxyz[2],
+    //                                 hmc.getHeadingDeg(sensor.magxyz[0],sensor.magxyz[1],-13, -169),
+    //                                 hmc.getHeadingDeg(sensor.magxyz[0],sensor.magxyz[1],-250, -270),                                    
+    //                                 hmc.getHeadingDeg(-(sensor.magxyz[2]+208),sensor.magxyz[1]+169,0,0));
 }
 
 void log_thread(){
@@ -128,17 +136,18 @@ void log_thread(){
     //fprintf(fp,"press[hPa]\tdist[cm]\ttime[ms]\tAIL\tELE\tTHL\tRUD\r\n");
     while(1){
         fprintf(fp, "%f\t%f\t", t.read(), sensor.press);
-        // for(int i=0; i<3; i++){
-        //     fprintf(fp, "%f\t", sensor.pressLP[i]); 
-        // }
-        for(int i=0; i<4; i++){
+        for(int i=0; i<3; i++)
+            fprintf(fp,"%d\t",sensor.magxyz[i]);
+        fprintf(fp,"%f\t",hmc.getHeadingDeg(sensor.magxyz[0],sensor.magxyz[1],-250, -270));        
+        fprintf(fp, "%f\t%f\tf\t", sensor.lat,sensor.lng,sensor.speed);
+        fprintf(fp, "%f\t%f\t", D3G.getTurnDeg(), D3G.getGoalDist());
+        for(int i=0; i<4; i++)
             fprintf(fp,"%d\t", rcch.value(i));
-        }
-        fprintf(fp, "%f\t", g_thlRatio); 
-        fprintf(fp, "%f\t", g_thlRatio_old);
-        fprintf(fp, "%f\t%f\t", D3G.hover.dH, D3G.hover.dV);
+        // fprintf(fp, "%f\t", g_thlRatio); 
+        // fprintf(fp, "%f\t", g_thlRatio_old);
+        // fprintf(fp, "%f\t%f\t", D3G.hover.dH, D3G.hover.dV);
         fprintf(fp,"\r\n");
-        Thread::wait(50);
+        Thread::wait(100);
     }
 }
 
@@ -148,7 +157,16 @@ void print_thread(){
         // pc.printf("%f\t%f",
         //           D3G.hover.pressToHeight_m(sensor.press),
         //           g_thlRatio);
-        //pc.printf("%f\t",sensor.press);
+        pc.printf("%f\t",sensor.press);
+        for(int i=0; i<3; i++)
+            pc.printf("%d\t",sensor.magxyz[i]);
+        pc.printf("%f\t",hmc.getHeadingDeg(sensor.magxyz[0],sensor.magxyz[1],-250, -270, false));
+        pc.printf("%f\t%f\t%f\t",sensor.lat,sensor.lng,sensor.speed);        
+        pc.printf("%f\t",D3G.guide.getCompassRad()* 180.0/M_PI);
+        pc.printf("%f\t%f\t", D3G.getTurnDeg(), D3G.getGoalDist());
+        // for(int i = 0; i<4; i++)
+        //     pc.printf("%d\t", D3G.mRcch.value(i));
+
         // printChannels(4,false);
         // pc.printf("%d\t", chControl.throttole());
         //pc.printf("%f\t%f\t", D3G.hover.dH * 100, D3G.hover.dV * 100);
@@ -166,14 +184,15 @@ void print_thread(){
         
         //pc.printf("%f %f ",sensor.timer[0]-sensor.timer_old[0], sensor.timer[1]-sensor.timer_old[1]);
         pc.printf("\r\n");
-        Thread::wait(40);
+        Thread::wait(100);
     }
 }
 
 void ch_callback(){
+    D3G.process(rcch);   
     if(g_isControlled){
-        rcch.setThrottole(chControl.throttole());
-    }    
+        // rcch.setThrottole(chControl.throttole());
+    }
     setPpm(rcch);
     getRcch(rcch);
 }
@@ -197,32 +216,22 @@ int main()
     fs.mount(&bd);
     loadConfigFile("/sd/D3config.txt");
 
-
-    D3G.hover.setPgain(confVal.pressPgain);
-    D3G.hover.setDgain(confVal.pressDgain);   
-    D3G.hover.setHoveringTHLRatio(0.55);
-    D3G.hover.setMaxMinTHL(0.08, -0.08);
-    D3G.hover.setTargetPressure(bmp.getPressure());
-    D3G.hover.setThresholdHeightRange(confVal.thresholdHeightRange);
-
+    setupD3G();
     t.start();
 
-    initializeMPU9250();
+    // initializeMPU9250();
     initializeHMC5983();
     bmp.initialize(BMP280::INDOOR_NAVIGATION);
 
+    gpsSerial.attach(callback(gps_callback));
 
-    // thread[0].start(callback(bmp_thread));
-    // thread[1].start(callback(sensingMpu9250));
-    // thread[2].start(callback(log_thread));
-    // thread[3].start(callback(print_thread));
-    
+    // thread[0].start(callback(log_thread));
+    thread[1].start(callback(print_thread));
+    thread[2].start(callback(&queue, &EventQueue::dispatch_forever));
     queue.call_every(17,ch_callback);
     queue.call_every(bmp.getCycle_ms(),bmp_thread);
     // queue.call_every(30,mpu_thread);
     queue.call_every(70,hmc_thread);
-    queue.dispatch();
-    gpsSerial.attach(callback(gps_callback));
     
     Thread::yield;
     wait(1);
@@ -236,8 +245,16 @@ int main()
     uint16_t g_thl_old;
      
     while(1){
+        if(gps.location.isUpdated()){
+            sensor.lat = gps.location.lat();
+            sensor.lng = gps.location.lng();
+            sensor.speed = gps.speed.mps();
+            D3G.updateGPSData(sensor.lat, sensor.lng, sensor.speed);
+            // D3G.guide.updateCurrentLocation(sensor.lat,sensor.lng);
+        }
         if(rcch.value(7) > 1500){
         // if(true){
+            D3G.nowControlling(true);
             if(!swRise){
                 D3G.hover.setTargetPressure(sensor.press);
                 g_thl_old = rcch.throttole();
@@ -251,12 +268,44 @@ int main()
             }
             g_isControlled = true;
         }else{
+            D3G.nowControlling(false);        
             swRise = false;
             g_isControlled = false;
         }
         Thread::yield;
     }
 }
+
+void setupD3G(){
+    // D3G.setStartTurnDeg(DEFAULT::START_TURN_DEGREE);
+    // D3G.setMaxELEIncremental(DEFAULT::ELE_INCLIMENTAL);
+    // D3G.setMaxRUDIncremental(DEFAULT::RUD_INCLIMENTAL);
+    // D3G.setGainVtoS(DEFAULT::GAIN_V_TO_S);
+    // D3G.setMaxStopSec(DEFAULT::MAX_STOP_SECOND);
+    // D3G.setHoveringTHLRatio(DEFAULT::THLOTTOLE_HOVERING);
+    
+    // D3G.move.setNeutralELE(DEFAULT::NTL_ELE);
+    // D3G.move.setForwardELE(DEFAULT::FWD_ELE);
+    // D3G.move.setBackELE(DEFAULT::BCK_ELE);   
+    // D3G.move.setNeutralAIL(DEFAULT::NTL_AIL);
+    // D3G.move.setRightAIL(DEFAULT::RGT_AIL);    
+    // D3G.move.setLeftAIL(DEFAULT::LFT_AIL);
+    // D3G.move.setNeutralRUD(DEFAULT::NTL_RUD);
+    // D3G.move.setRightTurnRUD(DEFAULT::RGT_TURN_RUD);
+    // D3G.move.setLeftTurnRUD(DEFAULT::LFT_TURN_RUD);
+
+    D3G.guide.setGoalLocation(confVal.goalLat, confVal.goalLng);
+    D3G.guide.setCompassAxis(D3Guide::AXIS_Y, D3Guide::AXIS_X);
+    D3G.guide.setMagBias(confVal.compassCalib);
+
+    D3G.hover.setPgain(confVal.pressPgain);
+    D3G.hover.setDgain(confVal.pressDgain);   
+    D3G.hover.setHoveringTHLRatio(0.55);
+    D3G.hover.setMaxMinTHL(0.08, -0.08);
+    D3G.hover.setTargetPressure(bmp.getPressure());
+    D3G.hover.setThresholdHeightRange(confVal.thresholdHeightRange);
+}
+
 
 int searchNewLogFileNumber(char fname[]){
     uint16_t i_FileCheck;
@@ -299,7 +348,6 @@ void printChannels(int chNum, bool linefeed){
         pc.printf("%d\t", rcch.value(i));
     if(linefeed)
         pc.printf("\r\n");
-    
 }
 
 bool loadConfigFile(const char *fname){
