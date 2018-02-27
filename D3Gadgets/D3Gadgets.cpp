@@ -19,11 +19,14 @@ hover(&mRcch)
 void D3Gadgets::process(RCChannel& rcch){
     if(mIsControlling){
         guideLocation();
-        for(int i=0; i<4; i++)
-            rcch.setValue(i,mRcch.value(i));
-        // rcch.setValue(0,mRcch.value(0));
-        // rcch.setValue(1,mRcch.value(1));
-        // rcch.setValue(3,mRcch.value(3));
+        if(mGoalDist < mChangeSequenceDist){
+
+        }
+        // for(int i=0; i<4; i++)
+        //     rcch.setValue(i,mRcch.value(i));
+        rcch.setValue(0,mRcch.value(0));
+        rcch.setValue(1,mRcch.value(1));
+        rcch.setValue(3,mRcch.value(3));
     }
 }
 

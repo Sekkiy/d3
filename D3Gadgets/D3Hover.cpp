@@ -1,38 +1,49 @@
 #include "D3Hover.h"
-#include "math.h"
+#include <math.h>
 
 D3Hover::D3Hover(RCChannel* rcch)
 : p_rcch(rcch),
-  velocity(0),
-  ddH_threshold(0.35)
+  mVelocity(0),
+  mDdH_threshold(0.35)
 {
     setPgain(0);
+    setIgain(0);
     setDgain(0);
+    mThresholdIntegral = false;
     t.start();
 }
 
 float D3Hover::calcTHLRatio(float hPa){
-    dH = targetHeight - pressToHeight_m(hPa); //[m]
-    dV = calcVelocity(dH); //[m/s] 
-
-    // float thl = hoveringTHLRatio + Kp * dH - Kd * dV;
-    float thl =  Kp * dH + Kd * dV;
-
-    DEBUG_PRINT("%f\t%f\r\n",dH, dV);    
+    mDH = mTargetHeight - pressToHeight_m(hPa); //[m]
+    mDT = t.read();
+    t.reset();
+    mIdH = calcIntegral(mDH,mDT);
+    mDV = calcVelocity(mDH,mDT); //[m/s] 
     
-    if(thl > maxTHL) thl = maxTHL;
-    if(thl < minTHL) thl = minTHL;
+    // float thl = hoveringTHLRatio + Kp * mDH - Kd * mDV;
+    float thl =  mKp * mDH + mKi * mIdH + mKd * mDV;
+
+    DEBUG_PRINT("%f\t%f\r\n",mDH, mDV);    
+    
+    if(thl > mMaxTHL) thl = mMaxTHL;
+    if(thl < mMinTHL) thl = mMinTHL;
 
     return thl;
 }
 
-float D3Hover::calcVelocity(float dH){
+float D3Hover::calcVelocity(float dH, float dt){
     static float dH_current = dH;
     float ddH = dH - dH_current;
-    if(counter.count(abs(ddH) > ddH_threshold, 5)){
+    if(counter.count(abs(ddH) > mDdH_threshold, 5)){
         dH_current = dH;
-        velocity = ddH / t.read();
-        t.reset();
+        mVelocity = ddH / dt;
     }
-    return velocity;
+    return mVelocity;
+}
+
+float D3Hover::calcIntegral(float dH, float dt){
+    mIntegral += dH * dt;
+    if(mThresholdIntegral && abs(mIntegral) <= mIMax)
+        mIntegral = mThresholdIntegral;
+    return mIntegral;
 }

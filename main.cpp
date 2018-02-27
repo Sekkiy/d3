@@ -20,6 +20,7 @@
 #define LOGNAME "log"
 #define CHNUM 8
 
+#define CALIBRATE_COMPASS 
 
 RawSerial pc(s2v2::PC_TX, s2v2::PC_RX);
 // RawSerial pc(s2v2::SBUS_TX, s2v2::SBUS_RX);
@@ -67,6 +68,7 @@ struct SensorVal{
 
 struct ConfigVal{
     float pressPgain;
+    float pressIgain;
     float pressDgain;
     float targetHeight;
     float thresholdHeightRange;
@@ -77,6 +79,21 @@ struct ConfigVal{
     uint16_t trimAIL;
     uint16_t trimELE;
     uint16_t trimRUD;
+    
+    //平面誘導
+    float startTurnDeg;
+    uint16_t AILIncremental;
+    uint16_t ELEIncremental;
+    uint16_t RUDIncremental;
+    float gainVtoS;
+    float maxStopSecond;
+    uint8_t compassAxisForward;
+    uint8_t compassAxisRight;
+    float changeSequenceDist;
+
+    uint16_t AILNeutral;
+    uint16_t ELENeutral;
+    uint16_t RUDNeutral;
 } confVal;
 
 void setupD3G();
@@ -87,6 +104,7 @@ void printChannels(int chNum, bool linefeed = true);
 bool loadConfigFile(const char *fname);
 void initializeMPU9250();
 void initializeHMC5983();
+void calibrateCompass();
 
 
 void bmp_thread(){
@@ -188,7 +206,7 @@ void print_thread(){
     }
 }
 
-void ch_callback(){
+void ch_thread(){
     D3G.process(rcch);   
     if(g_isControlled){
         // rcch.setThrottole(chControl.throttole());
@@ -221,6 +239,9 @@ int main()
 
     // initializeMPU9250();
     initializeHMC5983();
+#ifdef CALIBRATE_COMPASS
+    calibrateCompass();
+#endif    
     bmp.initialize(BMP280::INDOOR_NAVIGATION);
 
     gpsSerial.attach(callback(gps_callback));
@@ -228,7 +249,7 @@ int main()
     // thread[0].start(callback(log_thread));
     thread[1].start(callback(print_thread));
     thread[2].start(callback(&queue, &EventQueue::dispatch_forever));
-    queue.call_every(17,ch_callback);
+    queue.call_every(17,ch_thread);
     queue.call_every(bmp.getCycle_ms(),bmp_thread);
     // queue.call_every(30,mpu_thread);
     queue.call_every(70,hmc_thread);
@@ -277,29 +298,32 @@ int main()
 }
 
 void setupD3G(){
-    // D3G.setStartTurnDeg(DEFAULT::START_TURN_DEGREE);
-    // D3G.setMaxELEIncremental(DEFAULT::ELE_INCLIMENTAL);
-    // D3G.setMaxRUDIncremental(DEFAULT::RUD_INCLIMENTAL);
-    // D3G.setGainVtoS(DEFAULT::GAIN_V_TO_S);
-    // D3G.setMaxStopSec(DEFAULT::MAX_STOP_SECOND);
-    // D3G.setHoveringTHLRatio(DEFAULT::THLOTTOLE_HOVERING);
+    D3G.setStartTurnDeg(confVal.startTurnDeg);
+    D3G.setMaxELEIncremental(confVal.ELEIncremental);
+    D3G.setMaxRUDIncremental(confVal.RUDIncremental);
+    D3G.setGainVtoS(confVal.gainVtoS);
+    D3G.setMaxStopSec(confVal.maxStopSecond);
+    D3G.setChangeSequenceDist(confVal.changeSequenceDist);
+    // D3G.setHoveringTHLRatio(confVal.hoveringTHLRatio);
     
-    // D3G.move.setNeutralELE(DEFAULT::NTL_ELE);
-    // D3G.move.setForwardELE(DEFAULT::FWD_ELE);
-    // D3G.move.setBackELE(DEFAULT::BCK_ELE);   
-    // D3G.move.setNeutralAIL(DEFAULT::NTL_AIL);
-    // D3G.move.setRightAIL(DEFAULT::RGT_AIL);    
-    // D3G.move.setLeftAIL(DEFAULT::LFT_AIL);
-    // D3G.move.setNeutralRUD(DEFAULT::NTL_RUD);
-    // D3G.move.setRightTurnRUD(DEFAULT::RGT_TURN_RUD);
-    // D3G.move.setLeftTurnRUD(DEFAULT::LFT_TURN_RUD);
+    D3G.move.setNeutralELE(confVal.ELENeutral);
+    D3G.move.setForwardELE(confVal.ELENeutral + confVal.ELEIncremental);
+    D3G.move.setBackELE(confVal.ELENeutral - confVal.ELEIncremental);   
+    D3G.move.setNeutralAIL(confVal.AILNeutral);
+    D3G.move.setRightAIL(confVal.AILNeutral + confVal.AILIncremental);
+    D3G.move.setLeftAIL(confVal.AILNeutral - confVal.AILIncremental);
+    D3G.move.setNeutralRUD(confVal.RUDNeutral);
+    D3G.move.setRightTurnRUD(confVal.RUDNeutral + confVal.RUDIncremental);
+    D3G.move.setLeftTurnRUD(confVal.RUDNeutral - confVal.RUDIncremental);
 
     D3G.guide.setGoalLocation(confVal.goalLat, confVal.goalLng);
-    D3G.guide.setCompassAxis(D3Guide::AXIS_Y, D3Guide::AXIS_X);
+    D3G.guide.setCompassAxis(static_cast<D3Guide::compassAxis>(confVal.compassAxisForward),
+                             static_cast<D3Guide::compassAxis>(confVal.compassAxisRight));
     D3G.guide.setMagBias(confVal.compassCalib);
 
     D3G.hover.setPgain(confVal.pressPgain);
-    D3G.hover.setDgain(confVal.pressDgain);   
+    D3G.hover.setIgain(confVal.pressIgain);
+    D3G.hover.setDgain(confVal.pressDgain);
     D3G.hover.setHoveringTHLRatio(0.55);
     D3G.hover.setMaxMinTHL(0.08, -0.08);
     D3G.hover.setTargetPressure(bmp.getPressure());
@@ -354,6 +378,7 @@ bool loadConfigFile(const char *fname){
     namespace DF = DEFAULT;
     if(!config.load(fname)){
         confVal.pressPgain   = DF::PRESSURE_PGAIN;
+        confVal.pressIgain   = DF::PRESSURE_IGAIN;
         confVal.pressDgain   = DF::PRESSURE_DGAIN;
         confVal.targetHeight = DF::TARGET_HEIGHT;
         confVal.goalLat      = DF::GOAL_LATITUDE;
@@ -366,9 +391,24 @@ bool loadConfigFile(const char *fname){
         confVal.trimAIL      = DF::TLIM_AIL;
         confVal.trimELE      = DF::TLIM_ELE;
         confVal.trimRUD      = DF::TLIM_RUD;
+
+        confVal.startTurnDeg    = DF::START_TURN_DEGREE;
+        confVal.AILIncremental  = DF::AIL_INCLIMENTAL;
+        confVal.ELEIncremental  = DF::ELE_INCLIMENTAL;
+        confVal.RUDIncremental  = DF::RUD_INCLIMENTAL;
+        confVal.gainVtoS        = DF::GAIN_V_TO_S;
+        confVal.maxStopSecond   = DF::MAX_STOP_SECOND;
+        confVal.compassAxisForward = DF::COMPASS_AXIS_FORWARD;
+        confVal.compassAxisRight   = DF::COMPASS_AXIS_RIGHT;
+        confVal.changeSequenceDist = DF::CHANGE_SEQUENCE_DISTANCE;
+
+        confVal.AILNeutral   = DF::NTL_AIL;
+        confVal.ELENeutral   = DF::NTL_ELE;
+        confVal.RUDNeutral   = DF::NTL_RUD;
         return false;
     }else{
         confVal.pressPgain   = config.get("PRESSURE_PGAIN");
+        confVal.pressIgain   = config.get("PRESSURE_IGAIN");
         confVal.pressDgain   = config.get("PRESSURE_DGAIN");
         confVal.targetHeight = config.get("TARGET_HEIGHT");
         confVal.goalLat      = config.get("GOAL_LATITUDE");
@@ -378,9 +418,23 @@ bool loadConfigFile(const char *fname){
         confVal.compassCalib[0] = config.get("COMPASS_CALIBRATION_X");
         confVal.compassCalib[1] = config.get("COMPASS_CALIBRATION_Y");
         confVal.compassCalib[2] = config.get("COMPASS_CALIBRATION_Z");
-        confVal.trimAIL      = static_cast<float>(config.get("TLIM_AIL"));
-        confVal.trimELE      = static_cast<float>(config.get("TLIM_ELE"));
-        confVal.trimRUD      = static_cast<float>(config.get("TLIM_RUD"));
+        confVal.trimAIL      = static_cast<uint16_t>(config.get("TLIM_AIL"));
+        confVal.trimELE      = static_cast<uint16_t>(config.get("TLIM_ELE"));
+        confVal.trimRUD      = static_cast<uint16_t>(config.get("TLIM_RUD"));
+        
+        confVal.startTurnDeg = config.get("START_TURN_DEGREE");
+        confVal.AILIncremental= static_cast<uint16_t>(config.get("AIL_INCLIMENTAL"));
+        confVal.ELEIncremental= static_cast<uint16_t>(config.get("ELE_INCLIMENTAL"));
+        confVal.RUDIncremental= static_cast<uint16_t>(config.get("RUD_INCLIMENTAL"));
+        confVal.gainVtoS     = config.get("GAIN_V_TO_S");
+        confVal.maxStopSecond= config.get("MAX_STOP_SECOND");
+        confVal.compassAxisForward = static_cast<uint8_t>(config.get("COMPASS_AXIS_FORWARD"));
+        confVal.compassAxisRight   = static_cast<uint8_t>(config.get("COMPASS_AXIS_RIGHT"));
+        confVal.changeSequenceDist = config.get("CHANGE_SEQUENCE_DISTANCE");
+
+        confVal.AILNeutral   = static_cast<uint16_t>(config.get("NTL_AIL"));
+        confVal.ELENeutral   = static_cast<uint16_t>(config.get("NTL_ELE"));
+        confVal.RUDNeutral   = static_cast<uint16_t>(config.get("NTL_RUD"));
         return true;
     }
 }
@@ -421,4 +475,20 @@ void initializeMPU9250(){
 
 void initializeHMC5983(){
     hmc.init();
+}
+
+void calibrateCompass(){
+    int16_t magxyz[3];
+    bool enableWrite = true;
+    FILE* fp = fopen("/sd/CompassCalibration.txt", "w");
+    if(fp == NULL)
+        enableWrite = false;
+    pc.printf("compass calibration...\r\n");
+    while(1){
+        hmc.getXYZ(magxyz);
+        pc.printf("%d\t%d\t%d\r\n", magxyz[0], magxyz[1], magxyz[2]);
+        if(enableWrite)
+            fprintf(fp, "%d\t%d\t%d\r\n", magxyz[0], magxyz[1], magxyz[2]);
+        wait_ms(30);
+    }
 }

@@ -26,6 +26,7 @@ public:
     void setGainVtoS(float gain){mGainVtoS = gain;}
     void setMaxStopSec(float second){mMaxStopSec = second;}
     void setHoveringTHLRatio(float ratio){mHoveringTHLRatio = ratio;}
+    void setChangeSequenceDist(float meters){mChangeSequenceDist = meters;}
     void nowControlling(bool isControlling = true){mIsControlling = isControlling;}
 
     float getTurnDeg(){return mTurnDeg;}
@@ -63,6 +64,7 @@ private:
     float mMaxStopSec;
     float mTurnDeg;
     float mGoalDist;
+    float mChangeSequenceDist;
 
     void setMoveParams();
     void moveByTime(MoveComand comand, float second);

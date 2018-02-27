@@ -9,7 +9,7 @@ public:
     D3Guide(){}
 
     enum compassAxis{
-        AXIS_X,
+        AXIS_X = 0,
         AXIS_Y,
         AXIS_Z,
         AXIS_mX,    //-X
