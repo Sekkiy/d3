@@ -1,5 +1,7 @@
 #include "D3Guide.h"
 #include <math.h>
+#include <stdlib.h>
+#include <sstream>
 
 
 //divideVelocity : 機体の速度を前後と左右方向に分ける．
@@ -88,4 +90,39 @@ double D3Guide::withinMPiToPi(double rad){
     if(rad < -M_PI)
         rad += 2*M_PI;
     return rad;
+}
+
+
+void D3Guide::encode(char c){
+    switch(c){
+        case 'S':
+            mStr.clear();
+            return;
+        case 'F':
+            decode(mStr);            
+            return;
+        default:
+            mStr.push_back(c);
+    }
+}
+
+bool D3Guide::decode(std::string& str){
+    if(str.size() != MAX_RASPI_SENTENCE)
+        return false;
+    std::vector<std::string> strVec;
+    strVec = split(str,',');
+    for(int i=0; i<2; i++)
+        mRaspiData[i] = std::stoi(strVec[i]);
+    mRaspiIsUpdated = true;
+}
+
+//http://faithandbrave.hateblo.jp/entry/2014/05/01/171631 より抜粋
+static std::vector<std::string> split(const std::string& input, char delimiter){
+    std::istringstream stream(input);
+    std::string field;
+    std::vector<std::string> result;
+    while (std::getline(stream, field, delimiter)) {
+        result.push_back(field);
+    }
+    return result;
 }

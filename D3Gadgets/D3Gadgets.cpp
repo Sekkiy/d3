@@ -13,17 +13,27 @@ hover(&mRcch)
     setGainVtoS(DEFAULT::GAIN_V_TO_S);
     setMaxStopSec(DEFAULT::MAX_STOP_SECOND);
     setHoveringTHLRatio(DEFAULT::THLOTTOLE_HOVERING);
+    setStartDecelerationDist(DEFAULT::START_DECELERATION_DISTANCE);
+    setDecelerationRate(DEFAULT::DECELERATION_RATE);
+    mEnteringGoal = false;
+    mGoalDist = 100;
     nowControlling(false);
 }
 
 void D3Gadgets::process(RCChannel& rcch){
-    if(mIsControlling){
-        guideLocation();
-        if(mGoalDist < mChangeSequenceDist){
-
-        }
+    calcToGoalParams();
+    if(!mEnteringGoal && (mGoalDist < mChangeSequenceDist)){
+        // moveByTime(MOVE_BACK, 0.4);
+        mEnteringGoal = true;
+    }else if(mGoalDist < mChangeSequenceDist){
+    }else{
+        guideLocation();            
+        if(mEnteringGoal)
+            mEnteringGoal = false;
+    }
         // for(int i=0; i<4; i++)
         //     rcch.setValue(i,mRcch.value(i));
+    if(mIsControlling){
         rcch.setValue(0,mRcch.value(0));
         rcch.setValue(1,mRcch.value(1));
         rcch.setValue(3,mRcch.value(3));
@@ -76,11 +86,8 @@ void D3Gadgets::moveByTime(MoveComand comand, float second){
 }
 
 void D3Gadgets::guideLocation(){
-    mTurnDeg = static_cast<float>(guide.getTurnRad()) * 180.0/M_PI;
-    mGoalDist = static_cast<float>(guide.getGoalDistance());
-
     float absDeg = abs(mTurnDeg);
-    move.forward(pitchByDeg(absDeg));
+    move.forward(static_cast<uint16_t>(pitchRateByGoal(mGoalDist) * pitchByDeg(absDeg)));
     if(mTurnDeg > 0)
         move.rightTurn(yawByDeg(absDeg));
     else
@@ -147,4 +154,12 @@ uint16_t D3Gadgets::yawByDeg(float absDeg){
         return mMaxRUDInc;
     else
         return static_cast<uint16_t>(fline(absDeg, mStartTurnDeg, static_cast<float>(mMaxRUDInc), 0.0, 0.0));
+}
+
+float D3Gadgets::pitchRateByGoal(float meters){
+    if(meters < mStartDecelerationDist)
+        return fline(meters, 0.0, mDecelerationRate, mStartDecelerationDist, 1.0);
+    else
+        return 1.0;
+    
 }

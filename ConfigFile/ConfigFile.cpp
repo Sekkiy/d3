@@ -25,7 +25,7 @@ bool ConfigFile::load(const char *fname){
 }
 
 //http://faithandbrave.hateblo.jp/entry/2014/05/01/171631 より抜粋
-std::vector<std::string> split(const std::string& input, char delimiter)
+static std::vector<std::string> split(const std::string& input, char delimiter)
 {
     std::istringstream stream(input);
 
@@ -36,4 +36,3 @@ std::vector<std::string> split(const std::string& input, char delimiter)
     }
     return result;
 }
-

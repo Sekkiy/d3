@@ -20,21 +20,22 @@
 #define LOGNAME "log"
 #define CHNUM 8
 
-#define CALIBRATE_COMPASS 
+//CALIBRATE_COMPASS:コメントアウトを外すとプログラム実行せずコンパスの値をシリアルとファイルに流すだけになる
+// #define CALIBRATE_COMPASS    
 
 RawSerial pc(s2v2::PC_TX, s2v2::PC_RX);
 // RawSerial pc(s2v2::SBUS_TX, s2v2::SBUS_RX);
 RawSerial gpsSerial(s2v2::CH5, s2v2::CH6);
 BMP280 bmp(s2v2::BMP_SDA, s2v2::BMP_SCL);
-HCSR04 hcsr04(s2v2::CH3, s2v2::CH4);
-PpmOut ppmOut(s2v2::CH2,CHNUM); //Ch2
-PpmIn ppmIn(s2v2::CH1,CHNUM); //CH1
+RawSerial pi(s2v2::CH1, s2v2::CH2);
+PpmOut ppmOut(s2v2::CH2, CHNUM); //CH2
+PpmIn ppmIn(s2v2::CH1, CHNUM); //CH1
 TinyGPSPlus gps;
 SDBlockDevice bd(PB_15, PB_14, PB_13, PB_12);
 FATFileSystem fs("sd");
-ConfigFile config;
 MPU9250 mpu(s2v2::MPU_SDA,s2v2::MPU_SCL,&pc);
 HMC5983 hmc(s2v2::CH8, s2v2::CH7);
+DigitalOut led1(s2v2::CH5);
 
 D3Gadgets D3G;
 
@@ -90,6 +91,8 @@ struct ConfigVal{
     uint8_t compassAxisForward;
     uint8_t compassAxisRight;
     float changeSequenceDist;
+    float startDecelerationDist;
+    float decelerationRate;
 
     uint16_t AILNeutral;
     uint16_t ELENeutral;
@@ -137,8 +140,14 @@ void mpu_thread(){
 //x -250
 //y -270
 void hmc_thread(){
-    hmc.getXYZ(sensor.magxyz);
-    D3G.updateCompassData(sensor.magxyz);
+    int16_t magxyz[3];
+    hmc.getXYZ(magxyz);
+    //ノイズ対策
+    if((abs(magxyz[0])<3000) && (abs(magxyz[1])<3000) && (abs(magxyz[2])<3000)){
+        for(int i=0; i<3; i++)
+            sensor.magxyz[i] = magxyz[i];
+        D3G.updateCompassData(sensor.magxyz);
+    } 
     // D3G.guide.updateCompass(sensor.magxyz);
     // pc.printf("%d\t%d\t%d\t%lf\t%lf\t%lf\r\n",sensor.magxyz[0],sensor.magxyz[1],sensor.magxyz[2],
     //                                 hmc.getHeadingDeg(sensor.magxyz[0],sensor.magxyz[1],-13, -169),
@@ -178,14 +187,14 @@ void print_thread(){
         pc.printf("%f\t",sensor.press);
         for(int i=0; i<3; i++)
             pc.printf("%d\t",sensor.magxyz[i]);
-        pc.printf("%f\t",hmc.getHeadingDeg(sensor.magxyz[0],sensor.magxyz[1],-250, -270, false));
+        // pc.printf("%f\t",hmc.getHeadingDeg(sensor.magxyz[0],sensor.magxyz[1],-250, -270, false));
         pc.printf("%f\t%f\t%f\t",sensor.lat,sensor.lng,sensor.speed);        
         pc.printf("%f\t",D3G.guide.getCompassRad()* 180.0/M_PI);
         pc.printf("%f\t%f\t", D3G.getTurnDeg(), D3G.getGoalDist());
         // for(int i = 0; i<4; i++)
         //     pc.printf("%d\t", D3G.mRcch.value(i));
 
-        // printChannels(4,false);
+        printChannels(4,false);
         // pc.printf("%d\t", chControl.throttole());
         //pc.printf("%f\t%f\t", D3G.hover.dH * 100, D3G.hover.dV * 100);
 
@@ -219,6 +228,11 @@ void gps_callback(){
     gps.encode(gpsSerial.getc());
 }
 
+void raspi_callback(){
+    D3G.guide.encode(pc.getc());
+    // if(D3G.guide.RaspiIsUpdated())
+    //     pc.printf("%d\t%d\r\n",D3G.guide.getRaspiX(), D3G.guide.getRaspiY());
+}
 
 // main() runs in its own thread in the OS
 int main()
@@ -231,8 +245,8 @@ int main()
     pc.printf("Hello SkipperS2v2\r\n");
     pc.printf("Now initilizing...\r\n");
 
-    fs.mount(&bd);
-    loadConfigFile("/sd/D3config.txt");
+    // fs.mount(&bd);
+    // loadConfigFile("/sd/D3config.txt");
 
     setupD3G();
     t.start();
@@ -245,6 +259,7 @@ int main()
     bmp.initialize(BMP280::INDOOR_NAVIGATION);
 
     gpsSerial.attach(callback(gps_callback));
+    pc.attach(callback((raspi_callback)));
 
     // thread[0].start(callback(log_thread));
     thread[1].start(callback(print_thread));
@@ -255,14 +270,16 @@ int main()
     queue.call_every(70,hmc_thread);
     
     Thread::yield;
+    led1 = 0;
     wait(1);
+    led1 = 1;
 
     pc.printf("Complete initilizing\r\n");
 
     int t_current, t_old = 0;
     bool swRise = false;
     D3G.hover.setTargetPressure(sensor.press);
-    
+
     uint16_t g_thl_old;
      
     while(1){
@@ -273,6 +290,10 @@ int main()
             D3G.updateGPSData(sensor.lat, sensor.lng, sensor.speed);
             // D3G.guide.updateCurrentLocation(sensor.lat,sensor.lng);
         }
+        if(D3G.getGoalDist() < confVal.changeSequenceDist)
+            led1 = 0;
+        else
+            led1 = 1;
         if(rcch.value(7) > 1500){
         // if(true){
             D3G.nowControlling(true);
@@ -304,11 +325,13 @@ void setupD3G(){
     D3G.setGainVtoS(confVal.gainVtoS);
     D3G.setMaxStopSec(confVal.maxStopSecond);
     D3G.setChangeSequenceDist(confVal.changeSequenceDist);
+    D3G.setStartDecelerationDist(confVal.startDecelerationDist);
+    D3G.setDecelerationRate(confVal.decelerationRate);    
     // D3G.setHoveringTHLRatio(confVal.hoveringTHLRatio);
     
     D3G.move.setNeutralELE(confVal.ELENeutral);
     D3G.move.setForwardELE(confVal.ELENeutral + confVal.ELEIncremental);
-    D3G.move.setBackELE(confVal.ELENeutral - confVal.ELEIncremental);   
+    D3G.move.setBackELE(confVal.ELENeutral - confVal.ELEIncremental);
     D3G.move.setNeutralAIL(confVal.AILNeutral);
     D3G.move.setRightAIL(confVal.AILNeutral + confVal.AILIncremental);
     D3G.move.setLeftAIL(confVal.AILNeutral - confVal.AILIncremental);
@@ -376,6 +399,7 @@ void printChannels(int chNum, bool linefeed){
 
 bool loadConfigFile(const char *fname){
     namespace DF = DEFAULT;
+    ConfigFile config;
     if(!config.load(fname)){
         confVal.pressPgain   = DF::PRESSURE_PGAIN;
         confVal.pressIgain   = DF::PRESSURE_IGAIN;
@@ -401,6 +425,8 @@ bool loadConfigFile(const char *fname){
         confVal.compassAxisForward = DF::COMPASS_AXIS_FORWARD;
         confVal.compassAxisRight   = DF::COMPASS_AXIS_RIGHT;
         confVal.changeSequenceDist = DF::CHANGE_SEQUENCE_DISTANCE;
+        confVal.startDecelerationDist = DF::START_DECELERATION_DISTANCE;
+        confVal.decelerationRate = DF::DECELERATION_RATE;
 
         confVal.AILNeutral   = DF::NTL_AIL;
         confVal.ELENeutral   = DF::NTL_ELE;
@@ -431,6 +457,8 @@ bool loadConfigFile(const char *fname){
         confVal.compassAxisForward = static_cast<uint8_t>(config.get("COMPASS_AXIS_FORWARD"));
         confVal.compassAxisRight   = static_cast<uint8_t>(config.get("COMPASS_AXIS_RIGHT"));
         confVal.changeSequenceDist = config.get("CHANGE_SEQUENCE_DISTANCE");
+        confVal.startDecelerationDist = config.get("START_DECELERATION_DISTANCE");
+        confVal.decelerationRate = config.get("DECELERATION_RATE");
 
         confVal.AILNeutral   = static_cast<uint16_t>(config.get("NTL_AIL"));
         confVal.ELENeutral   = static_cast<uint16_t>(config.get("NTL_ELE"));
@@ -486,9 +514,11 @@ void calibrateCompass(){
     pc.printf("compass calibration...\r\n");
     while(1){
         hmc.getXYZ(magxyz);
-        pc.printf("%d\t%d\t%d\r\n", magxyz[0], magxyz[1], magxyz[2]);
-        if(enableWrite)
-            fprintf(fp, "%d\t%d\t%d\r\n", magxyz[0], magxyz[1], magxyz[2]);
-        wait_ms(30);
+        if ((abs(magxyz[0]) < 3000) && (abs(magxyz[1]) < 3000) && (abs(magxyz[2]) < 3000)){
+            pc.printf("%d\t%d\t%d\r\n", magxyz[0], magxyz[1], magxyz[2]);
+            if (enableWrite)
+                fprintf(fp, "%d\t%d\t%d\r\n", magxyz[0], magxyz[1], magxyz[2]);
+            wait_ms(30);
+        }
     }
 }

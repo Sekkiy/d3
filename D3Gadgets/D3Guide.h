@@ -1,6 +1,8 @@
 #ifndef D3_GUIDE_H
 #define D3_GUIDE_H
 
+#include <string>
+#include <vector>
 #include "mbed.h"
 
 class D3Guide
@@ -17,6 +19,7 @@ public:
         AXIS_mZ     //-Z
     };
 
+
     void updateCurrentLocation(double lat, double lng);
     void updateCompass(int16_t magxyz[3]);
     void updateInputs(double lat, double lng, int16_t magxyz[3]);
@@ -29,6 +32,11 @@ public:
     double getTurnRad();
     double getGoalDistance();
     bool divideVelocity(double val[2], double velocity, bool checkPrecision = true);
+    
+    void encode(char c);
+    int16_t getRaspiX();
+    int16_t getRaspiY();
+    bool RaspiIsUpdated();
 
 private:
     double mCurrentLat[2];
@@ -42,13 +50,16 @@ private:
     compassAxis mForward;
     compassAxis mRight;
     
+    std::string mStr;
+    bool mRaspiIsUpdated;
+    int16_t mRaspiData[2];
 
     enum Condition{
         Stop
-
     } condition;
 
     constexpr static double DEGREE_TO_RADIAN = 0.017453292519943295769236907684886;
+    constexpr static size_t MAX_RASPI_SENTENCE = 11 - 2;  //全出力数からスタートビットとストップビットを除いた数 
 
     double calcCompassRad(int16_t magxyz[3]);    
     double calcGpsRad(double lat1, double long1, double lat2, double long2);
@@ -57,7 +68,13 @@ private:
     double distanceBetween(double lat1, double long1, double lat2, double long2);
     double withinMPiToPi(double rad);
     double toRadian(double deg);
+
+    bool decode(std::string& str);
 };
+
+static std::vector<std::string> split(const std::string& input, char delimiter);
+
+
 
 inline void D3Guide::updateInputs(double lat, double lng, int16_t magxyz[3]){
     updateCurrentLocation(lat, lng);
@@ -117,8 +134,22 @@ inline double D3Guide::getGoalDistance(){
     return distanceBetween(mCurrentLat[0], mCurrentLng[0], mGoalLat, mGoalLng);
 }
 
+inline bool D3Guide::RaspiIsUpdated(){
+    return mRaspiIsUpdated;
+}
+
 inline double D3Guide::getCompassRad(){
     return mCompassRad; 
+}
+
+inline int16_t D3Guide::getRaspiX(){
+    mRaspiIsUpdated = false;
+    return mRaspiData[0];
+}
+
+inline int16_t D3Guide::getRaspiY(){
+    mRaspiIsUpdated = false;    
+    return mRaspiData[1];
 }
 
 inline double D3Guide::calcCompassRad(int16_t magxyz[3]){

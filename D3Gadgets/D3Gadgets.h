@@ -27,6 +27,8 @@ public:
     void setMaxStopSec(float second){mMaxStopSec = second;}
     void setHoveringTHLRatio(float ratio){mHoveringTHLRatio = ratio;}
     void setChangeSequenceDist(float meters){mChangeSequenceDist = meters;}
+    void setStartDecelerationDist(float meters){mStartDecelerationDist = meters;}
+    void setDecelerationRate(float rate){mDecelerationRate = rate;}
     void nowControlling(bool isControlling = true){mIsControlling = isControlling;}
 
     float getTurnDeg(){return mTurnDeg;}
@@ -39,8 +41,6 @@ public:
         mVelocity = velocity;
     }
 
-    uint16_t pitchByDeg(float deg);
-    uint16_t yawByDeg(float deg);
     RCChannel mRcch;
 
 private:
@@ -65,6 +65,9 @@ private:
     float mTurnDeg;
     float mGoalDist;
     float mChangeSequenceDist;
+    float mStartDecelerationDist;
+    float mDecelerationRate;
+    bool mEnteringGoal;
 
     void setMoveParams();
     void moveByTime(MoveComand comand, float second);
@@ -72,12 +75,22 @@ private:
     void stopLateralMotion();
     void stopVerticalMotion();
     void stopMotion();
+    void calcToGoalParams();
+    uint16_t pitchByDeg(float deg);
+    uint16_t yawByDeg(float deg);
+    float pitchRateByGoal(float meters);
     // uint16_t pitchByDeg(float deg);
     // uint16_t yawByDeg(float deg);
     float fline(float val, float x0, float y0, float x1, float y1);
 };
 
-//2点間の直線
+inline void D3Gadgets::calcToGoalParams(){
+    mTurnDeg = static_cast<float>(guide.getTurnRad()) * 180.0/M_PI;
+    mGoalDist = static_cast<float>(guide.getGoalDistance());
+}
+
+
+//点0~点1の2点間の直線
 inline float D3Gadgets::fline(float val, float x0, float y0, float x1, float y1){
     return (y1-y0)/(x1-x0) * (val-x0) + y0;
 }

@@ -22,7 +22,7 @@ private:
 
 };
 
-std::vector<std::string> split(const std::string& input, char delimiter);
+static std::vector<std::string> split(const std::string& input, char delimiter);
 
 
 #endif //CONFIGFILE_H
