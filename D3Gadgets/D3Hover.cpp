@@ -4,6 +4,8 @@
 D3Hover::D3Hover(RCChannel* rcch)
 : p_rcch(rcch),
   mVelocity(0),
+  mTargetHeight(0),
+  mDH(0),
   mDdH_threshold(0.35)
 {
     setPgain(0);
@@ -16,7 +18,6 @@ D3Hover::D3Hover(RCChannel* rcch)
 float D3Hover::calcTHLRatio(float hPa){
     mDH = mTargetHeight - pressToHeight_m(hPa); //[m]
     mDT = t.read();
-    t.reset();
     mIdH = calcIntegral(mDH,mDT);
     mDV = calcVelocity(mDH,mDT); //[m/s] 
     
@@ -37,6 +38,7 @@ float D3Hover::calcVelocity(float dH, float dt){
     if(counter.count(abs(ddH) > mDdH_threshold, 5)){
         dH_current = dH;
         mVelocity = ddH / dt;
+        t.reset();        
     }
     return mVelocity;
 }

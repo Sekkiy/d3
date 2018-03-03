@@ -3,20 +3,21 @@
 #include <stdlib.h>
 #include <sstream>
 
+D3Guide::D3Guide():
+mCableDirect(CABLE_DOWNWORD),
+mRedIsinCamere(false)
+{
+    mStr.reserve(MAX_RASPI_SENTENCE);
+}
+
 
 //divideVelocity : 機体の速度を前後と左右方向に分ける．
 //                 val[2]:速度を格納する配列．val[0]:機体前後速度(前正), val[1]:機体左右速度(右正)
-//                 checkPresiciton:精度チェック(default:true)
-//                 設定した距離よりも移動量が小さければ精度が確証できないとしてfalseを返す
-bool D3Guide::divideVelocity(double val[2], double velocity, bool checkPrecision){
-    double gpsMovingDirectionRad = calcGpsRad(mCurrentLat[1], mCurrentLng[1], mCurrentLat[0], mCurrentLng[0]);
-    double movingDirectionRad = withinMPiToPi(mCompassRad + gpsMovingDirectionRad);
+void D3Guide::divideVelocity(double val[2], double velocity, double course){
+    double courseRad = withinMPiToPi(toRadian(course));
+    double movingDirectionRad = withinMPiToPi(mCompassRad + courseRad);
     val[0] = velocity * cos(movingDirectionRad);
     val[1] = velocity * sin(movingDirectionRad);
-    if(checkPrecision && distanceBetween(mCurrentLat[1], mCurrentLng[1], mCurrentLat[0], mCurrentLng[0]) < mLocationError)
-        return false;
-    else
-        return true; 
 }
 
 //TinyGpsPlusのcourseToを改造
@@ -36,7 +37,7 @@ double D3Guide::calcGpsRad(double lat1, double long1, double lat2, double long2)
   return a2;
 }
 
-int16_t D3Guide::toFrameAxis(int16_t magxyz[3], compassAxis axis){
+int16_t D3Guide::fromCompassToFrame(int16_t magxyz[3], CompassAxis axis){
     switch(axis){
         case AXIS_X:
             return magxyz[0]-mMagBiasxyz[0];
@@ -56,6 +57,32 @@ int16_t D3Guide::toFrameAxis(int16_t magxyz[3], compassAxis axis){
         case AXIS_mZ:
             return -(magxyz[2]-mMagBiasxyz[2]);
             break;
+    }
+}
+
+//カメラ座標->機体座標
+//カメラはケーブル下向きで正.xは画面右正,yは画面上正で中心が0　100分率で送ってくる
+void D3Guide::fromCameraToFrame(int16_t framexy[2], int16_t cameraxy[2], CameraDirection direction){
+    switch(direction){
+        case CABLE_UPWORD:
+            framexy[0] = -cameraxy[0];
+            framexy[1] = -cameraxy[1];
+            break;
+        case CABLE_DOWNWORD:
+            framexy[0] = cameraxy[0];
+            framexy[1] = cameraxy[1];
+            break;
+        case CABLE_RIGHT:
+            framexy[0] = -cameraxy[1];
+            framexy[1] = cameraxy[0];
+            break;
+        case CABLE_LEFT:
+            framexy[0] = cameraxy[1];
+            framexy[1] = -cameraxy[0];
+            break;
+        default:
+            framexy[0] = cameraxy[0];
+            framexy[1] = cameraxy[1];
     }
 }
 
@@ -107,14 +134,24 @@ void D3Guide::encode(char c){
 }
 
 bool D3Guide::decode(std::string& str){
+    int16_t cameraxy[2];
     if(str.size() != MAX_RASPI_SENTENCE)
         return false;
     std::vector<std::string> strVec;
     strVec = split(str,',');
-    for(int i=0; i<2; i++)
-        mRaspiData[i] = std::stoi(strVec[i]);
+    for(int i=0; i<2; i++){
+        cameraxy[i] = std::stoi(strVec[i]);;
+    }
+    if(cameraxy[0] == 999 && cameraxy[1] == 999){
+        mRedIsinCamere = false;
+        return true;
+    }
+    fromCameraToFrame(mRaspiData, cameraxy, mCableDirect);
+    mRedIsinCamere = true;    
     mRaspiIsUpdated = true;
+    return true;
 }
+
 
 //http://faithandbrave.hateblo.jp/entry/2014/05/01/171631 より抜粋
 static std::vector<std::string> split(const std::string& input, char delimiter){

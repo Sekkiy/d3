@@ -23,11 +23,10 @@
 //CALIBRATE_COMPASS:コメントアウトを外すとプログラム実行せずコンパスの値をシリアルとファイルに流すだけになる
 // #define CALIBRATE_COMPASS    
 
-RawSerial pc(s2v2::PC_TX, s2v2::PC_RX);
+RawSerial pc(s2v2::PC_TX, s2v2::PC_RX); 
 // RawSerial pc(s2v2::SBUS_TX, s2v2::SBUS_RX);
 RawSerial gpsSerial(s2v2::CH5, s2v2::CH6);
 BMP280 bmp(s2v2::BMP_SDA, s2v2::BMP_SCL);
-RawSerial pi(s2v2::CH1, s2v2::CH2);
 PpmOut ppmOut(s2v2::CH2, CHNUM); //CH2
 PpmIn ppmIn(s2v2::CH1, CHNUM); //CH1
 TinyGPSPlus gps;
@@ -35,7 +34,9 @@ SDBlockDevice bd(PB_15, PB_14, PB_13, PB_12);
 FATFileSystem fs("sd");
 MPU9250 mpu(s2v2::MPU_SDA,s2v2::MPU_SCL,&pc);
 HMC5983 hmc(s2v2::CH8, s2v2::CH7);
-DigitalOut led1(s2v2::CH5);
+DigitalOut led1(s2v2::CH4);
+
+CMyFilter filter;
 
 D3Gadgets D3G;
 
@@ -57,12 +58,14 @@ struct SensorVal{
     float press;
     float pressLP[3];
     bool bmpIsUpdated;
-    float rpy[3];
+    float accelxyz[3];
     int16_t magxyz[3];
     bool hmcIsUpdated;
     double lat;
     double lng;
     double speed;
+    double course;
+    uint32_t satellites;
     float timer[3];
     float timer_old[3];
 } sensor;
@@ -86,6 +89,8 @@ struct ConfigVal{
     uint16_t AILIncremental;
     uint16_t ELEIncremental;
     uint16_t RUDIncremental;
+    uint16_t slowAILIncremental;
+    uint16_t slowELEIncremental;
     float gainVtoS;
     float maxStopSecond;
     uint8_t compassAxisForward;
@@ -93,6 +98,9 @@ struct ConfigVal{
     float changeSequenceDist;
     float startDecelerationDist;
     float decelerationRate;
+
+    uint8_t cameraDirection;
+    float finishLength;
 
     uint16_t AILNeutral;
     uint16_t ELENeutral;
@@ -113,28 +121,20 @@ void calibrateCompass();
 void bmp_thread(){
     sensor.press = bmp.getPressure();
     D3G.updateBaroData(sensor.press);
+    sensor.pressLP[0] = filter.Process(sensor.press);
+    // pc.printf("%f\t%f\r\n",D3G.hover.pressToHeight_m(sensor.press) * 100,
+    //                         D3G.hover.pressToHeight_m(sensor.pressLP[0]) * 100);
     sensor.bmpIsUpdated = true;
-    sensor.timer_old[0] = sensor.timer[0];
-    sensor.timer[0] = t.read_ms();
 }
 
 void mpu_thread(){
     if(!mpu.sensingAcGyMg()){
         return;
     }
-    
-    // if (imu.fifoAvailable()){ //fifo is not being available
-    //     wait_ms(5);
-    //     // Use dmpUpdateFifo to update the ax, gx, mx, etc. values
-    //     if (imu.dmpUpdateFifo() == INV_SUCCESS){
-    //         // imu.computeEulerAngles();
-    //         imu.computeEulerAngles_D3();
-    //         pc.printf("%.4lf, %.4lf, %.4lf\r\n", imu.yaw,imu.pitch,imu.roll);
-            
-    //     }
-    // }
-    sensor.timer_old[1] = sensor.timer[1];
-    sensor.timer[1] = t.read_ms();
+
+    mpu.pickupAccel(sensor.accelxyz);
+    // pc.printf("%f\t%f\t%f\t",sensor.accelxyz[0],sensor.accelxyz[1],sensor.accelxyz[2]);
+    // pc.printf("%f\r\n",100*sqrt(sensor.accelxyz[0]*sensor.accelxyz[0]+sensor.accelxyz[1]*sensor.accelxyz[1]+sensor.accelxyz[2]*sensor.accelxyz[2]));
 }
 
 //x -250
@@ -148,11 +148,6 @@ void hmc_thread(){
             sensor.magxyz[i] = magxyz[i];
         D3G.updateCompassData(sensor.magxyz);
     } 
-    // D3G.guide.updateCompass(sensor.magxyz);
-    // pc.printf("%d\t%d\t%d\t%lf\t%lf\t%lf\r\n",sensor.magxyz[0],sensor.magxyz[1],sensor.magxyz[2],
-    //                                 hmc.getHeadingDeg(sensor.magxyz[0],sensor.magxyz[1],-13, -169),
-    //                                 hmc.getHeadingDeg(sensor.magxyz[0],sensor.magxyz[1],-250, -270),                                    
-    //                                 hmc.getHeadingDeg(-(sensor.magxyz[2]+208),sensor.magxyz[1]+169,0,0));
 }
 
 void log_thread(){
@@ -165,14 +160,20 @@ void log_thread(){
         fprintf(fp, "%f\t%f\t", t.read(), sensor.press);
         for(int i=0; i<3; i++)
             fprintf(fp,"%d\t",sensor.magxyz[i]);
-        fprintf(fp,"%f\t",hmc.getHeadingDeg(sensor.magxyz[0],sensor.magxyz[1],-250, -270));        
-        fprintf(fp, "%f\t%f\tf\t", sensor.lat,sensor.lng,sensor.speed);
+        fprintf(fp, "%lf\t%lf\t%lf\t%lf\t", sensor.lat,sensor.lng,sensor.speed,sensor.course);
+        fprintf(fp, "%d\t",sensor.satellites);
         fprintf(fp, "%f\t%f\t", D3G.getTurnDeg(), D3G.getGoalDist());
+        fprintf(fp,"%f\t%f\t", D3G.dV_FB, D3G.pitchVal);
+        fprintf(fp,"%f\t%f\t", D3G.mV[0], D3G.mV[1]);
+
+        for(int i = 0; i<4; i++)
+            fprintf(fp,"%d\t", D3G.mRcch.value(i));
         for(int i=0; i<4; i++)
             fprintf(fp,"%d\t", rcch.value(i));
         // fprintf(fp, "%f\t", g_thlRatio); 
         // fprintf(fp, "%f\t", g_thlRatio_old);
         // fprintf(fp, "%f\t%f\t", D3G.hover.dH, D3G.hover.dV);
+        fprintf(fp,"%d\t",D3G.isControlling());
         fprintf(fp,"\r\n");
         Thread::wait(100);
     }
@@ -181,33 +182,26 @@ void log_thread(){
 void print_thread(){
     pc.printf("press[hPa]\tdist[cm]\r\n");
     while(1){
-        // pc.printf("%f\t%f",
-        //           D3G.hover.pressToHeight_m(sensor.press),
-        //           g_thlRatio);
-        pc.printf("%f\t",sensor.press);
-        for(int i=0; i<3; i++)
-            pc.printf("%d\t",sensor.magxyz[i]);
-        // pc.printf("%f\t",hmc.getHeadingDeg(sensor.magxyz[0],sensor.magxyz[1],-250, -270, false));
-        pc.printf("%f\t%f\t%f\t",sensor.lat,sensor.lng,sensor.speed);        
-        pc.printf("%f\t",D3G.guide.getCompassRad()* 180.0/M_PI);
-        pc.printf("%f\t%f\t", D3G.getTurnDeg(), D3G.getGoalDist());
+        // pc.printf("%f\t",sensor.press);
+        // pc.printf("%f\t", D3G.hover.mDV);
+        pc.printf("%lf, %lf, %lf, %lf\t",sensor.lat,sensor.lng,sensor.speed,sensor.course);
+        // pc.printf("%d\t",sensor.satellites);
+        pc.printf("%lf\t",D3G.guide.getCompassRad()* 180.0/M_PI);
+
+        pc.printf("%f, %f\t", D3G.getTurnDeg(), D3G.getGoalDist());
+        // pc.printf("%d\t%d\t%f\t",D3G.guide.getRaspiX(), D3G.guide.getRaspiY(),D3G.guide.getRaspiLength());
+        pc.printf("%f, %f\t", D3G.dV_FB, D3G.pitchVal);
+        pc.printf("%f, %f\t", D3G.mV[0], D3G.mV[1]);        
+
+        // printChannels(4,false);
         // for(int i = 0; i<4; i++)
         //     pc.printf("%d\t", D3G.mRcch.value(i));
 
-        printChannels(4,false);
+        // pc.printf("%f\t%f\t%f\t",D3G.hover.mDH, D3G.hover.mDV, D3G.hover.mDT);
+
         // pc.printf("%d\t", chControl.throttole());
         //pc.printf("%f\t%f\t", D3G.hover.dH * 100, D3G.hover.dV * 100);
 
-        // if(gps.location.isUpdated()){
-        //     pc.printf("lat:%lf\tlng:%lf\t",gps.location.lat(), gps.location.lng());
-        //     pc.printf("dist:%lf\tcourse%lf\t",TinyGPSPlus::distanceBetween(gps.location.lat(),gps.location.lng(),confVal.goalLat,confVal.goalLng),
-        //                                 TinyGPSPlus::courseTo(gps.location.lat(),gps.location.lng(),confVal.goalLat,confVal.goalLng));
-        //     pc.printf("alt:%f\tspeed:%f\t",gps.altitude.meters(),gps.speed.mps());
-
-        //     // pc.printf("date:%d/%d/%d/%d\t",gps.date.year(), gps.date.month(), gps.date.month(), gps.date.day());
-        //     // pc.printf("time:%d h %d m %d s",gps.time.hour(), gps.time.minute(), gps.time.second());
-        //     pc.printf("\r\n");
-        // }
         
         //pc.printf("%f %f ",sensor.timer[0]-sensor.timer_old[0], sensor.timer[1]-sensor.timer_old[1]);
         pc.printf("\r\n");
@@ -224,12 +218,36 @@ void ch_thread(){
     getRcch(rcch);
 }
 
+void led_thread(){
+    while(1){
+        if(D3G.getGoalDist() < confVal.changeSequenceDist)
+            led1 = 0;
+        else
+            led1 = 1;
+        /*
+        switch(D3G.getSequence()){
+            case D3Gadgets::GUIDE_GPS:
+                led1 = 1;
+                break;
+            case D3Gadgets::GUIDE_GPS_CLOSE:
+                led1 = 0;
+                break;
+            case D3Gadgets::GUIDE_CAMERA:
+                led1 = !led1;
+                break;
+        }
+        */
+        Thread::wait(500);
+    }
+}
+
 void gps_callback(){
     gps.encode(gpsSerial.getc());
 }
 
 void raspi_callback(){
-    D3G.guide.encode(pc.getc());
+    D3G.encodePiSerial(pc.getc());
+    // pc.putc(pc.getc());
     // if(D3G.guide.RaspiIsUpdated())
     //     pc.printf("%d\t%d\r\n",D3G.guide.getRaspiX(), D3G.guide.getRaspiY());
 }
@@ -239,36 +257,40 @@ int main()
 {
     Thread thread[4];
     
+    filter.LowPass(1.0, 1/sqrt(2), 110);
+
     EventQueue queue(100 * EVENTS_EVENT_SIZE);
 
     pc.baud(115200);
     pc.printf("Hello SkipperS2v2\r\n");
     pc.printf("Now initilizing...\r\n");
 
-    // fs.mount(&bd);
-    // loadConfigFile("/sd/D3config.txt");
+    fs.mount(&bd);
+    loadConfigFile("/sd/D3config.txt");
 
     setupD3G();
     t.start();
 
-    // initializeMPU9250();
+    initializeMPU9250();
+    bmp.initialize(BMP280::DROP_DETECTION);    
     initializeHMC5983();
 #ifdef CALIBRATE_COMPASS
     calibrateCompass();
-#endif    
-    bmp.initialize(BMP280::INDOOR_NAVIGATION);
+#endif
 
     gpsSerial.attach(callback(gps_callback));
     pc.attach(callback((raspi_callback)));
 
-    // thread[0].start(callback(log_thread));
-    thread[1].start(callback(print_thread));
-    thread[2].start(callback(&queue, &EventQueue::dispatch_forever));
+    thread[0].start(callback(&queue, &EventQueue::dispatch_forever));
     queue.call_every(17,ch_thread);
-    queue.call_every(bmp.getCycle_ms(),bmp_thread);
+    queue.call_every(20/*bmp.getCycle_ms()*/,bmp_thread);
     // queue.call_every(30,mpu_thread);
     queue.call_every(70,hmc_thread);
     
+    // thread[1].start(callback(log_thread));
+    thread[2].start(callback(print_thread));
+    thread[3].start(callback(led_thread));
+
     Thread::yield;
     led1 = 0;
     wait(1);
@@ -287,13 +309,16 @@ int main()
             sensor.lat = gps.location.lat();
             sensor.lng = gps.location.lng();
             sensor.speed = gps.speed.mps();
-            D3G.updateGPSData(sensor.lat, sensor.lng, sensor.speed);
+            sensor.course = gps.course.deg();
+            sensor.satellites = gps.satellites.value();
+            D3G.updateGPSData(sensor.lat, sensor.lng, sensor.speed,sensor.course);
             // D3G.guide.updateCurrentLocation(sensor.lat,sensor.lng);
         }
-        if(D3G.getGoalDist() < confVal.changeSequenceDist)
-            led1 = 0;
-        else
-            led1 = 1;
+
+        // if(D3G.getGoalDist() < confVal.changeSequenceDist)
+        //     led1 = 0;
+        // else
+        //     led1 = 1;
         if(rcch.value(7) > 1500){
         // if(true){
             D3G.nowControlling(true);
@@ -322,11 +347,14 @@ void setupD3G(){
     D3G.setStartTurnDeg(confVal.startTurnDeg);
     D3G.setMaxELEIncremental(confVal.ELEIncremental);
     D3G.setMaxRUDIncremental(confVal.RUDIncremental);
+    D3G.setSlowAILIncremental(confVal.slowAILIncremental);
+    D3G.setSlowELEIncremental(confVal.slowELEIncremental);
     D3G.setGainVtoS(confVal.gainVtoS);
     D3G.setMaxStopSec(confVal.maxStopSecond);
     D3G.setChangeSequenceDist(confVal.changeSequenceDist);
     D3G.setStartDecelerationDist(confVal.startDecelerationDist);
-    D3G.setDecelerationRate(confVal.decelerationRate);    
+    D3G.setDecelerationRate(confVal.decelerationRate);
+    D3G.setFinishLength(confVal.finishLength);
     // D3G.setHoveringTHLRatio(confVal.hoveringTHLRatio);
     
     D3G.move.setNeutralELE(confVal.ELENeutral);
@@ -340,9 +368,11 @@ void setupD3G(){
     D3G.move.setLeftTurnRUD(confVal.RUDNeutral - confVal.RUDIncremental);
 
     D3G.guide.setGoalLocation(confVal.goalLat, confVal.goalLng);
-    D3G.guide.setCompassAxis(static_cast<D3Guide::compassAxis>(confVal.compassAxisForward),
-                             static_cast<D3Guide::compassAxis>(confVal.compassAxisRight));
+    D3G.guide.setCompassAxis(static_cast<D3Guide::CompassAxis>(confVal.compassAxisForward),
+                             static_cast<D3Guide::CompassAxis>(confVal.compassAxisRight));
     D3G.guide.setMagBias(confVal.compassCalib);
+    D3G.guide.setCameraDirection(static_cast<D3Guide::CameraDirection>(confVal.cameraDirection));
+    // D3G.guide.setCameraDirection(D3Guide::CABLE_RIGHT);
 
     D3G.hover.setPgain(confVal.pressPgain);
     D3G.hover.setIgain(confVal.pressIgain);
@@ -401,6 +431,7 @@ bool loadConfigFile(const char *fname){
     namespace DF = DEFAULT;
     ConfigFile config;
     if(!config.load(fname)){
+        pc.printf("Cannot load config file...\r\n");
         confVal.pressPgain   = DF::PRESSURE_PGAIN;
         confVal.pressIgain   = DF::PRESSURE_IGAIN;
         confVal.pressDgain   = DF::PRESSURE_DGAIN;
@@ -420,6 +451,8 @@ bool loadConfigFile(const char *fname){
         confVal.AILIncremental  = DF::AIL_INCLIMENTAL;
         confVal.ELEIncremental  = DF::ELE_INCLIMENTAL;
         confVal.RUDIncremental  = DF::RUD_INCLIMENTAL;
+        confVal.slowAILIncremental = DF::SLOW_AIL_INCLIMENTAL;
+        confVal.slowELEIncremental = DF::SLOW_ELE_INCLIMENTAL;
         confVal.gainVtoS        = DF::GAIN_V_TO_S;
         confVal.maxStopSecond   = DF::MAX_STOP_SECOND;
         confVal.compassAxisForward = DF::COMPASS_AXIS_FORWARD;
@@ -427,12 +460,15 @@ bool loadConfigFile(const char *fname){
         confVal.changeSequenceDist = DF::CHANGE_SEQUENCE_DISTANCE;
         confVal.startDecelerationDist = DF::START_DECELERATION_DISTANCE;
         confVal.decelerationRate = DF::DECELERATION_RATE;
+        confVal.finishLength = DF::FINISH_LENGTH;
+        confVal.cameraDirection = DF::CAMERA_DIRECTION;
 
         confVal.AILNeutral   = DF::NTL_AIL;
         confVal.ELENeutral   = DF::NTL_ELE;
         confVal.RUDNeutral   = DF::NTL_RUD;
         return false;
     }else{
+        pc.printf("Success to load config file!\r\n");        
         confVal.pressPgain   = config.get("PRESSURE_PGAIN");
         confVal.pressIgain   = config.get("PRESSURE_IGAIN");
         confVal.pressDgain   = config.get("PRESSURE_DGAIN");
@@ -452,6 +488,8 @@ bool loadConfigFile(const char *fname){
         confVal.AILIncremental= static_cast<uint16_t>(config.get("AIL_INCLIMENTAL"));
         confVal.ELEIncremental= static_cast<uint16_t>(config.get("ELE_INCLIMENTAL"));
         confVal.RUDIncremental= static_cast<uint16_t>(config.get("RUD_INCLIMENTAL"));
+        confVal.slowAILIncremental = static_cast<uint16_t>(config.get("SLOW_AIL_INCLIMENTAL"));
+        confVal.slowELEIncremental = static_cast<uint16_t>(config.get("SLOW_ELE_INCLIMENTAL"));
         confVal.gainVtoS     = config.get("GAIN_V_TO_S");
         confVal.maxStopSecond= config.get("MAX_STOP_SECOND");
         confVal.compassAxisForward = static_cast<uint8_t>(config.get("COMPASS_AXIS_FORWARD"));
@@ -459,6 +497,8 @@ bool loadConfigFile(const char *fname){
         confVal.changeSequenceDist = config.get("CHANGE_SEQUENCE_DISTANCE");
         confVal.startDecelerationDist = config.get("START_DECELERATION_DISTANCE");
         confVal.decelerationRate = config.get("DECELERATION_RATE");
+        confVal.finishLength = config.get("FINISH_LENGTH");
+        confVal.cameraDirection = static_cast<uint8_t>(config.get("CAMERA_DIRECTION"));
 
         confVal.AILNeutral   = static_cast<uint16_t>(config.get("NTL_AIL"));
         confVal.ELENeutral   = static_cast<uint16_t>(config.get("NTL_ELE"));

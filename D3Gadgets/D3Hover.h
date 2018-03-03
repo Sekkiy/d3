@@ -4,6 +4,7 @@
 #include <math.h>
 #include "mbed.h"
 #include "RCChannel.h"
+#include "Counter.h"
 
 // #define _DEBUG_D3HOVER
 #ifdef _DEBUG_D3HOVER
@@ -12,26 +13,6 @@ extern RawSerial pc;
 #else
 #define DEBUG_PRINT(...)
 #endif
-
-class Counter
-{
-public:
-    Counter():mCount(0){}
-    
-    bool count(bool condition, int num){
-        if(condition){
-            mCount++;
-            if(mCount >= num){
-                mCount = 0;
-                return true;
-            }
-        }else
-            mCount = 0;
-        return false;
-    }
-private:
-    int mCount;
-};
 
 class D3Hover
 {
@@ -53,14 +34,13 @@ public:
 
     float pressToHeight_m(float hPa);
 
-    float mDH,mDV;//debug用
+    float mDH,mDV,mDT;//debug用
 
 private:
     RCChannel* p_rcch;
     Counter counter;
     Timer t;
 
-    float mDT;
     float mTargetHeight;
     float mKp,mKi,mKd;
     float mHoveringTHLRatio;
